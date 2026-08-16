@@ -1,8 +1,7 @@
 package org.yuktisetu.adminservice.policy;
 
 import org.springframework.stereotype.Component;
-import org.yuktisetu.adminservice.security.UserPrincipal;
-
+import org.yuktisetu.core.security.UserPrincipal;
 /**
  * Authorization rules for the Trust -> College -> Department hierarchy.
  *

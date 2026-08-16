@@ -2,6 +2,7 @@ package org.yuktisetu.adminservice.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -10,11 +11,12 @@ import org.springframework.web.bind.annotation.*;
 import org.yuktisetu.adminservice.dto.CollegeRequest;
 import org.yuktisetu.adminservice.dto.CollegeResponse;
 import org.yuktisetu.adminservice.dto.StatusChangeRequest;
-import org.yuktisetu.adminservice.security.UserPrincipal;
+import org.yuktisetu.core.security.UserPrincipal;
 import org.yuktisetu.adminservice.service.CollegeService;
 
 import java.util.List;
 
+@Slf4j
 @RestController
 @RequestMapping("/colleges")
 @RequiredArgsConstructor

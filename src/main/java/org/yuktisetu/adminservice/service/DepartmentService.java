@@ -1,13 +1,14 @@
 package org.yuktisetu.adminservice.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.yuktisetu.adminservice.dto.DepartmentRequest;
 import org.yuktisetu.adminservice.dto.DepartmentResponse;
 import org.yuktisetu.adminservice.exception.AdminExceptions;
 import org.yuktisetu.adminservice.policy.InstituteHierarchyPolicy;
-import org.yuktisetu.adminservice.security.UserPrincipal;
+import org.yuktisetu.core.security.UserPrincipal;
 import org.yuktisetu.db.College;
 import org.yuktisetu.db.Department;
 import org.yuktisetu.model.TenantStatus;
@@ -17,6 +18,7 @@ import org.yuktisetu.repository.DepartmentRepository;
 import java.time.Instant;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DepartmentService {
