@@ -22,6 +22,8 @@ public class BulkStudentCreateResponse {
         private String email;
         private String phone;
         private String prn;
+        private String collegeCode;
+        private String departmentCode;
         private String message;
     }
     
@@ -32,6 +34,9 @@ public class BulkStudentCreateResponse {
         private String lastName;
         private String email;
         private String phone;
+        private String prn;
+        private String collegeCode;
+        private String departmentCode;
         private String errorMessage;
         private String failedField;
     }

@@ -26,36 +26,29 @@ public class SecurityConfig {
     ) throws Exception {
 
         http
-                .csrf(csrf -> csrf.disable())
-
-                .cors(cors -> {})
-
-                .sessionManagement(sm ->
-                        sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-                )
-
-                .authorizeHttpRequests(auth -> auth
-                        // CORS preflight requests must never require JWT authentication
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-
-                        .requestMatchers("/actuator/health").permitAll()
-
-                        .anyRequest().authenticated()
-                )
-
-                .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint(
-                                new RestAuthenticationEntryPoint()
-                        )
-                        .accessDeniedHandler(
-                                new RestAccessDeniedHandler()
-                        )
-                )
-
-                .addFilterBefore(
-                        new JwtAuthenticationFilter(tokenVerifier),
-                        UsernamePasswordAuthenticationFilter.class
-                );
+            .csrf(csrf -> csrf.disable())
+            .cors(cors -> {})
+            .sessionManagement(sm ->
+                    sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            )
+            .authorizeHttpRequests(auth -> auth
+                    // CORS preflight requests must never require JWT authentication
+                    .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                    .requestMatchers("/actuator/health").permitAll()
+                    .anyRequest().authenticated()
+            )
+            .exceptionHandling(ex -> ex
+                    .authenticationEntryPoint(
+                            new RestAuthenticationEntryPoint()
+                    )
+                    .accessDeniedHandler(
+                            new RestAccessDeniedHandler()
+                    )
+            )
+            .addFilterBefore(
+                    new JwtAuthenticationFilter(tokenVerifier),
+                    UsernamePasswordAuthenticationFilter.class
+            );
 
         return http.build();
     }

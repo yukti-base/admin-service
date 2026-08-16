@@ -9,15 +9,24 @@ import org.yuktisetu.adminservice.dto.BulkStudentCreateResponse;
 import org.yuktisetu.adminservice.dto.BulkStudentRequest;
 import org.yuktisetu.adminservice.dto.StudentRequest;
 import org.yuktisetu.adminservice.exception.AdminExceptions;
+import org.yuktisetu.core.security.UserPrincipal;
+import org.yuktisetu.db.College;
+import org.yuktisetu.db.Department;
 import org.yuktisetu.db.StudentProfile;
 import org.yuktisetu.db.User;
+import org.yuktisetu.db.UserRoleAssignment;
+import org.yuktisetu.model.RoleType;
 import org.yuktisetu.model.UserStatus;
+import org.yuktisetu.repository.CollegeRepository;
+import org.yuktisetu.repository.DepartmentRepository;
 import org.yuktisetu.repository.StudentProfileRepository;
 import org.yuktisetu.repository.UserRepository;
+import org.yuktisetu.repository.UserRoleAssignmentRepository;
 
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 @AllArgsConstructor
@@ -28,10 +37,23 @@ public class BulkStudentService {
     private final StudentProfileRepository studentProfileRepository;
     private final TriggerNotificationService triggerNotificationService;
     private final PasswordEncoder passwordEncoder;
+    private final CollegeRepository collegeRepository;
+    private final DepartmentRepository departmentRepository;
+    private final UserRoleAssignmentRepository userRoleAssignmentRepository;
 
     @Transactional
-    public BulkStudentCreateResponse createBulkStudentProfile(BulkStudentRequest request) {
+    public BulkStudentCreateResponse createBulkStudentProfile(UserPrincipal userPrincipal, BulkStudentRequest request) {
         try {
+            User loggedInUser = null;
+            if (userPrincipal.hasRole(String.valueOf(RoleType.IT_ADMIN)) ||
+                    userPrincipal.hasRole(String.valueOf(RoleType.TNP_SUPER_ADMIN))) {
+                loggedInUser = userRepository.findById(userPrincipal.userId()).orElse(null);
+                log.info("User {} has {} authority to create bulk student profiles", userPrincipal.userId(), userPrincipal.roles().getFirst());
+            } else {
+                log.warn("User {} does not have sufficient authority to create bulk student profiles", userPrincipal.userId());
+                throw new AdminExceptions.InsufficientAuthorityException();
+            }
+
             if (request.getStudents() == null || request.getStudents().isEmpty()) {
                 throw new AdminExceptions.InvalidRequestException("Student list cannot be empty");
             }
@@ -94,6 +116,8 @@ public class BulkStudentService {
                             .email(studentRequest.getEmail())
                             .phone(studentRequest.getPhone())
                             .prn(studentRequest.getPrn())
+                            .collegeCode(studentRequest.getCollegeCode())
+                            .departmentCode(studentRequest.getDepartmentCode())
                             .message("Student processed successfully")
                             .build();
                     successfulStudents.add(successDto);
@@ -108,6 +132,8 @@ public class BulkStudentService {
                             .lastName(studentRequest.getLastName() != null ? studentRequest.getLastName() : "")
                             .email(studentRequest.getEmail() != null ? studentRequest.getEmail() : "")
                             .phone(studentRequest.getPhone() != null ? studentRequest.getPhone() : "")
+                            .collegeCode(studentRequest.getCollegeCode() != null ? studentRequest.getCollegeCode() : "")
+                            .departmentCode(studentRequest.getDepartmentCode() != null ? studentRequest.getDepartmentCode() : "")
                             .errorMessage(e.getMessage())
                             .failedField(failedField)
                             .build();
@@ -119,14 +145,38 @@ public class BulkStudentService {
             }
 
             // Save all users in batch
+            List<User> savedUsers = new ArrayList<>();
             if (!usersToSave.isEmpty()) {
-                List<User> savedUsers = userRepository.saveAll(usersToSave);
+                savedUsers = userRepository.saveAll(usersToSave);
+                String collegeCode = request.getStudents().getFirst().getCollegeCode();
+                String departmentCode = request.getStudents().getFirst().getDepartmentCode();
 
+                College college = collegeRepository.findByCodeAndIsDeletedFalse(collegeCode);
+                Department department = departmentRepository.findByCodeAndIsDeletedFalse(departmentCode);
+
+                if (Objects.isNull(college) || Objects.isNull(department)) {
+                    throw new AdminExceptions.InvalidRequestException("Invalid college or department code provided");
+                }
                 // Save all student profiles in batch (need to set the saved users)
                 for (int i = 0; i < studentProfilesToSave.size(); i++) {
                     studentProfilesToSave.get(i).setUser(savedUsers.get(i));
                 }
                 studentProfileRepository.saveAll(studentProfilesToSave);
+
+                List<UserRoleAssignment> userRoleAssignments = new ArrayList<>();
+                for (User user : savedUsers) {
+                    UserRoleAssignment assignment = new UserRoleAssignment();
+                    assignment.setUser(user);
+                    assignment.setRole(RoleType.STUDENT);
+                    assignment.setAssignedAt(new Date());
+                    assignment.setAssignedBy(loggedInUser);
+                    assignment.setActive(true);
+                    assignment.setCollege(college);
+                    assignment.setDepartment(department);
+                    userRoleAssignments.add(assignment);
+
+                }
+                userRoleAssignmentRepository.saveAll(userRoleAssignments);
 
                 log.info("Saved {} users and {} student profiles to database",
                         savedUsers.size(), studentProfilesToSave.size());
@@ -144,8 +194,10 @@ public class BulkStudentService {
             log.info("Bulk student DB processing completed. Total: {}, Successful: {}, Failed: {}",
                     studentRequests.size(), successfulStudents.size(), failedStudents.size());
 
+            List<Long> userIds = savedUsers.stream().map(User::getId).toList();
+            log.info("Count User IDs of successfully saved students: {}", userIds.size());
             // Trigger asynchronous invite processing (after DB transaction commits)
-            triggerNotificationService.processStudentInvitesAsync(successfulStudents);
+            triggerNotificationService.processStudentInvitesAsync(userIds, successfulStudents);
 
             return response;
         } catch (Exception e) {
@@ -175,6 +227,14 @@ public class BulkStudentService {
         if (studentRequest.getPrn() == null) {
             throw new AdminExceptions.InvalidRequestException(
                     String.format("Student at position %d: prn is required", index + 1));
+        }
+        if (studentRequest.getCollegeCode() == null || studentRequest.getCollegeCode().isBlank()) {
+            throw new AdminExceptions.InvalidRequestException(
+                    String.format("Student at position %d: collegeCode is required", index + 1));
+        }
+        if (studentRequest.getDepartmentCode() == null || studentRequest.getDepartmentCode().isBlank()) {
+            throw new AdminExceptions.InvalidRequestException(
+                    String.format("Student at position %d: departmentCode is required", index + 1));
         }
         
         // Additional validation for email format (basic)

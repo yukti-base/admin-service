@@ -20,4 +20,6 @@ public class StudentRequest {
     private Double percentage10th;
     private Double percentage12th;
     private String prn;
+    private String collegeCode;
+    private String departmentCode;
 }
