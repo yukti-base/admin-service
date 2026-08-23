@@ -204,7 +204,6 @@ public class BulkStudentService {
             log.error("Unexpected error during bulk student processing: {}", e.getMessage(), e);
             throw new RuntimeException(e);
         }
-
     }
 
     private void validateStudentRequest(StudentRequest studentRequest, int index) {
