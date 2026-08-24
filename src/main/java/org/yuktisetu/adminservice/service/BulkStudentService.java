@@ -45,8 +45,7 @@ public class BulkStudentService {
     public BulkStudentCreateResponse createBulkStudentProfile(UserPrincipal userPrincipal, BulkStudentRequest request) {
         try {
             User loggedInUser = null;
-            if (userPrincipal.hasRole(String.valueOf(RoleType.IT_ADMIN)) ||
-                    userPrincipal.hasRole(String.valueOf(RoleType.TNP_SUPER_ADMIN))) {
+            if (!userPrincipal.hasRole(String.valueOf(RoleType.STUDENT))) {
                 loggedInUser = userRepository.findById(userPrincipal.userId()).orElse(null);
                 log.info("User {} has {} authority to create bulk student profiles", userPrincipal.userId(), userPrincipal.roles().getFirst());
             } else {
@@ -143,20 +142,20 @@ public class BulkStudentService {
                             studentRequest.getEmail() != null ? studentRequest.getEmail() : "unknown", e.getMessage());
                 }
             }
+            String collegeCode = request.getStudents().getFirst().getCollegeCode();
+            String departmentCode = request.getStudents().getFirst().getDepartmentCode();
 
+            College college = collegeRepository.findByCodeAndIsDeletedFalse(collegeCode);
+            Department department = departmentRepository.findByCodeAndIsDeletedFalse(departmentCode);
+
+            if (Objects.isNull(college) || Objects.isNull(department)) {
+                throw new AdminExceptions.InvalidRequestException("Invalid college or department code provided");
+            }
             // Save all users in batch
             List<User> savedUsers = new ArrayList<>();
             if (!usersToSave.isEmpty()) {
                 savedUsers = userRepository.saveAll(usersToSave);
-                String collegeCode = request.getStudents().getFirst().getCollegeCode();
-                String departmentCode = request.getStudents().getFirst().getDepartmentCode();
 
-                College college = collegeRepository.findByCodeAndIsDeletedFalse(collegeCode);
-                Department department = departmentRepository.findByCodeAndIsDeletedFalse(departmentCode);
-
-                if (Objects.isNull(college) || Objects.isNull(department)) {
-                    throw new AdminExceptions.InvalidRequestException("Invalid college or department code provided");
-                }
                 // Save all student profiles in batch (need to set the saved users)
                 for (int i = 0; i < studentProfilesToSave.size(); i++) {
                     studentProfilesToSave.get(i).setUser(savedUsers.get(i));

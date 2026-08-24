@@ -7,6 +7,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.yuktisetu.adminservice.dto.BulkStudentCreateResponse;
+import org.yuktisetu.core.notification.config.EmailProperties;
 import org.yuktisetu.core.notification.model.InviteRecipient;
 import org.yuktisetu.core.notification.service.EmailService;
 import org.yuktisetu.db.User;
@@ -27,6 +28,7 @@ public class TriggerNotificationService {
     private final UserRepository userRepository;
     private final StringRedisTemplate redis;
     private final EmailService emailService;
+    private final EmailProperties emailProperties;
 
     @Value("${app.notification.debug:false}")
     private boolean debug;
@@ -65,7 +67,7 @@ public class TriggerNotificationService {
             recipients.add(new InviteRecipient(user.getEmail(), fullName, token));
 
             if (debug) {
-                String inviteLink = String.format("https://frontend.yuktisetu.com/accept-invite?token=%s", token);
+                String inviteLink = String.format("%s?token=%s", emailProperties.getBaseInviteUrl(), token);
                 log.info("QUEUED INVITE FOR: {} <{}>", fullName, user.getEmail());
                 log.info("  Invite Link: {}", inviteLink);
                 log.info("  Token: {} (expires in 72 hours)", token);
