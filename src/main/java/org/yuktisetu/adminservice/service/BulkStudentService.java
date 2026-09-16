@@ -60,6 +60,7 @@ public class BulkStudentService {
             List<StudentRequest> studentRequests = request.getStudents();
             List<User> usersToSave = new ArrayList<>();
             List<StudentProfile> studentProfilesToSave = new ArrayList<>();
+            List<StudentRequest> successfulRequests = new ArrayList<>();
             List<BulkStudentCreateResponse.BulkStudentSuccessDto> successfulStudents = new ArrayList<>();
             List<BulkStudentCreateResponse.BulkStudentFailureDto> failedStudents = new ArrayList<>();
 
@@ -89,24 +90,35 @@ public class BulkStudentService {
                             .build();
 
                     // Create StudentProfile entity
+                    // institution/degree/branch are NOT set here -- they live
+                    // on the STUDENT UserRoleAssignment (college/department FK
+                    // + degree, see below), not on StudentProfile.
                     StudentProfile studentProfile = StudentProfile.builder()
                             .user(user)
                             .dateOfBirth(null) // Not provided in request
                             .address(null) // Not provided in request
-                            .institution(null) // Not provided in request
-                            .degree(null) // Not provided in request
-                            .branch(null) // Not provided in request
                             .cgpa(studentRequest.getCGPA())
-                            .graduationYear(null) // Not provided in request
+                            .graduationYear(studentRequest.getGraduationYear())
                             .tenthPercentage(studentRequest.getPercentage10th())
                             .twelfthPercentage(studentRequest.getPercentage12th())
+                            .sem1Gpa(studentRequest.getSem1Gpa())
+                            .sem2Gpa(studentRequest.getSem2Gpa())
+                            .sem3Gpa(studentRequest.getSem3Gpa())
+                            .sem4Gpa(studentRequest.getSem4Gpa())
+                            .sem5Gpa(studentRequest.getSem5Gpa())
+                            .sem6Gpa(studentRequest.getSem6Gpa())
+                            .sem7Gpa(studentRequest.getSem7Gpa())
+                            .sem8Gpa(studentRequest.getSem8Gpa())
                             .createdAt(now)
                             .updatedAt(now)
                             .build();
 
-                    // Add to batch lists
+                    // Add to batch lists — successfulRequests stays index-aligned
+                    // with usersToSave/studentProfilesToSave so degree can be
+                    // matched back up to the right saved user below.
                     usersToSave.add(user);
                     studentProfilesToSave.add(studentProfile);
+                    successfulRequests.add(studentRequest);
 
                     // Prepare success response
                     BulkStudentCreateResponse.BulkStudentSuccessDto successDto = BulkStudentCreateResponse.BulkStudentSuccessDto.builder()
@@ -163,15 +175,16 @@ public class BulkStudentService {
                 studentProfileRepository.saveAll(studentProfilesToSave);
 
                 List<UserRoleAssignment> userRoleAssignments = new ArrayList<>();
-                for (User user : savedUsers) {
+                for (int i = 0; i < savedUsers.size(); i++) {
                     UserRoleAssignment assignment = new UserRoleAssignment();
-                    assignment.setUser(user);
+                    assignment.setUser(savedUsers.get(i));
                     assignment.setRole(RoleType.STUDENT);
                     assignment.setAssignedAt(new Date());
                     assignment.setAssignedBy(loggedInUser);
                     assignment.setActive(true);
                     assignment.setCollege(college);
                     assignment.setDepartment(department);
+                    assignment.setDegree(successfulRequests.get(i).getDegree());
                     userRoleAssignments.add(assignment);
 
                 }

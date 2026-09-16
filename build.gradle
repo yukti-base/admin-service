@@ -43,6 +43,8 @@ dependencies {
     implementation 'org.yuktisetu:core:1.0.0-SNAPSHOT'
     implementation 'org.yuktisetu:institute-dal:1.0.0-SNAPSHOT'
     implementation 'org.yuktisetu:user-dal:1.0.0-SNAPSHOT'
+    implementation 'org.yuktisetu:drive-dal:1.0.0-SNAPSHOT'
+    implementation 'org.yuktisetu:messaging-dal:1.0.0-SNAPSHOT'
 
 }
 

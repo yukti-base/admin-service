@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import org.yuktisetu.adminservice.dto.StatusChangeRequest;
 import org.yuktisetu.adminservice.dto.TrustRequest;
 import org.yuktisetu.adminservice.dto.TrustResponse;
+import org.yuktisetu.core.response.YuktiSetuResponse;
 import org.yuktisetu.core.security.UserPrincipal;
 import org.yuktisetu.adminservice.service.TrustService;
 
@@ -33,51 +34,52 @@ public class TrustController {
     // currently don't, see the note in that SecurityConfig.
     @PostMapping
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN')")
-    public ResponseEntity<TrustResponse> create(
+    public ResponseEntity<YuktiSetuResponse<TrustResponse>> create(
             @AuthenticationPrincipal UserPrincipal actor,
             @RequestBody @Valid TrustRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(trustService.create(actor, request));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(YuktiSetuResponse.success(trustService.create(actor, request), 201, "Trust created"));
     }
 
     @GetMapping
-    public ResponseEntity<List<TrustResponse>> listActive() {
-        return ResponseEntity.ok(trustService.listActive());
+    public ResponseEntity<YuktiSetuResponse<List<TrustResponse>>> listActive() {
+        return ResponseEntity.ok(YuktiSetuResponse.success(trustService.listActive()));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<TrustResponse> get(@PathVariable Long id) {
-        return ResponseEntity.ok(trustService.get(id));
+    public ResponseEntity<YuktiSetuResponse<TrustResponse>> get(@PathVariable Long id) {
+        return ResponseEntity.ok(YuktiSetuResponse.success(trustService.get(id)));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN')")
-    public ResponseEntity<TrustResponse> update(
+    public ResponseEntity<YuktiSetuResponse<TrustResponse>> update(
             @AuthenticationPrincipal UserPrincipal actor,
             @PathVariable Long id,
             @RequestBody @Valid TrustRequest request) {
-        return ResponseEntity.ok(trustService.update(actor, id, request));
+        return ResponseEntity.ok(YuktiSetuResponse.success(trustService.update(actor, id, request), "Trust updated"));
     }
 
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN')")
-    public ResponseEntity<TrustResponse> setStatus(
+    public ResponseEntity<YuktiSetuResponse<TrustResponse>> setStatus(
             @AuthenticationPrincipal UserPrincipal actor,
             @PathVariable Long id,
             @RequestBody @Valid StatusChangeRequest request) {
-        return ResponseEntity.ok(trustService.setStatus(actor, id, request.status()));
+        return ResponseEntity.ok(YuktiSetuResponse.success(trustService.setStatus(actor, id, request.status()), "Trust status updated"));
     }
 
     @PostMapping("/{id}/soft-delete")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN')")
-    public ResponseEntity<Void> softDelete(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
+    public ResponseEntity<YuktiSetuResponse<Void>> softDelete(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
         trustService.softDelete(actor, id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(YuktiSetuResponse.success(null, "Trust soft-deleted"));
     }
 
     @PostMapping("/{id}/restore")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN')")
-    public ResponseEntity<TrustResponse> restore(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
-        return ResponseEntity.ok(trustService.restore(actor, id));
+    public ResponseEntity<YuktiSetuResponse<TrustResponse>> restore(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
+        return ResponseEntity.ok(YuktiSetuResponse.success(trustService.restore(actor, id), "Trust restored"));
     }
 
     // Irreversible + IT-Admin-only gets its own path rather than DELETE
@@ -86,8 +88,8 @@ public class TrustController {
     // away from being triggered by accident.
     @PostMapping("/{id}/hard-delete")
     @PreAuthorize("hasAuthority('ROLE_IT_ADMIN')")
-    public ResponseEntity<Void> hardDelete(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
+    public ResponseEntity<YuktiSetuResponse<Void>> hardDelete(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
         trustService.hardDelete(actor, id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(YuktiSetuResponse.success(null, "Trust hard-deleted"));
     }
 }

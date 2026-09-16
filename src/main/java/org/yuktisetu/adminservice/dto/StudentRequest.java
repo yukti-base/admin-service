@@ -8,6 +8,11 @@ public class StudentRequest {
     private String lastName;
     private String email;
     private String phone;
+    // Academic program, e.g. "B.Tech", "M.Tech" -- stored on the created
+    // STUDENT UserRoleAssignment, not on StudentProfile (see
+    // UserRoleAssignment.degree).
+    private String degree;
+    private Integer graduationYear;
     private Double CGPA;
     private Double sem1Gpa;
     private Double sem2Gpa;

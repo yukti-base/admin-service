@@ -57,7 +57,9 @@ public class DepartmentService {
         department.setCreatedBy(actor.userId());
         department.setUpdatedBy(actor.userId());
 
-        return toResponse(departmentRepository.save(department));
+        Department saved = departmentRepository.save(department);
+        log.info("Created department id={} code={} collegeId={} actorId={}", saved.getId(), saved.getCode(), college.getId(), actor.userId());
+        return toResponse(saved);
     }
 
     public List<DepartmentResponse> listActiveForCollege(Long collegeId) {
@@ -89,7 +91,9 @@ public class DepartmentService {
         department.setCode(code);
         department.setUpdatedBy(actor.userId());
 
-        return toResponse(departmentRepository.save(department));
+        Department saved = departmentRepository.save(department);
+        log.info("Updated department id={} code={} actorId={}", saved.getId(), saved.getCode(), actor.userId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -101,7 +105,9 @@ public class DepartmentService {
         }
         department.setStatus(status);
         department.setUpdatedBy(actor.userId());
-        return toResponse(departmentRepository.save(department));
+        Department saved = departmentRepository.save(department);
+        log.info("Department id={} status changed to={} actorId={}", saved.getId(), status, actor.userId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -118,6 +124,7 @@ public class DepartmentService {
         department.setDeletedAt(Instant.now());
         department.setDeletedBy(actor.userId());
         departmentRepository.save(department);
+        log.info("Soft-deleted department id={} code={} actorId={}", department.getId(), department.getCode(), actor.userId());
     }
 
     @Transactional
@@ -131,7 +138,9 @@ public class DepartmentService {
         department.setDeletedAt(null);
         department.setDeletedBy(null);
         department.setUpdatedBy(actor.userId());
-        return toResponse(departmentRepository.save(department));
+        Department saved = departmentRepository.save(department);
+        log.info("Restored department id={} code={} actorId={}", saved.getId(), saved.getCode(), actor.userId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -148,6 +157,7 @@ public class DepartmentService {
         // if/when a Department-scoped entity is added later, add the same
         // existsByDepartmentId guard used at the Trust/College tiers above.
         departmentRepository.delete(department);
+        log.info("Hard-deleted department id={} code={} actorId={}", department.getId(), department.getCode(), actor.userId());
     }
 
     private DepartmentResponse toResponse(Department d) {

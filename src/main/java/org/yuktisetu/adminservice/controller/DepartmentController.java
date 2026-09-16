@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import org.yuktisetu.adminservice.dto.DepartmentRequest;
 import org.yuktisetu.adminservice.dto.DepartmentResponse;
 import org.yuktisetu.adminservice.dto.StatusChangeRequest;
+import org.yuktisetu.core.response.YuktiSetuResponse;
 import org.yuktisetu.core.security.UserPrincipal;
 import org.yuktisetu.adminservice.service.DepartmentService;
 
@@ -31,38 +32,39 @@ public class DepartmentController {
     // (Student, Ground Volunteer, etc.).
     @PostMapping
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN')")
-    public ResponseEntity<DepartmentResponse> create(
+    public ResponseEntity<YuktiSetuResponse<DepartmentResponse>> create(
             @AuthenticationPrincipal UserPrincipal actor,
             @RequestBody @Valid DepartmentRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(departmentService.create(actor, request));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(YuktiSetuResponse.success(departmentService.create(actor, request), 201, "Department created"));
     }
 
     @GetMapping
-    public ResponseEntity<List<DepartmentResponse>> listForCollege(@RequestParam Long collegeId) {
-        return ResponseEntity.ok(departmentService.listActiveForCollege(collegeId));
+    public ResponseEntity<YuktiSetuResponse<List<DepartmentResponse>>> listForCollege(@RequestParam Long collegeId) {
+        return ResponseEntity.ok(YuktiSetuResponse.success(departmentService.listActiveForCollege(collegeId)));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<DepartmentResponse> get(@PathVariable Long id) {
-        return ResponseEntity.ok(departmentService.get(id));
+    public ResponseEntity<YuktiSetuResponse<DepartmentResponse>> get(@PathVariable Long id) {
+        return ResponseEntity.ok(YuktiSetuResponse.success(departmentService.get(id)));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN')")
-    public ResponseEntity<DepartmentResponse> update(
+    public ResponseEntity<YuktiSetuResponse<DepartmentResponse>> update(
             @AuthenticationPrincipal UserPrincipal actor,
             @PathVariable Long id,
             @RequestBody @Valid DepartmentRequest request) {
-        return ResponseEntity.ok(departmentService.update(actor, id, request));
+        return ResponseEntity.ok(YuktiSetuResponse.success(departmentService.update(actor, id, request), "Department updated"));
     }
 
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN')")
-    public ResponseEntity<DepartmentResponse> setStatus(
+    public ResponseEntity<YuktiSetuResponse<DepartmentResponse>> setStatus(
             @AuthenticationPrincipal UserPrincipal actor,
             @PathVariable Long id,
             @RequestBody @Valid StatusChangeRequest request) {
-        return ResponseEntity.ok(departmentService.setStatus(actor, id, request.status()));
+        return ResponseEntity.ok(YuktiSetuResponse.success(departmentService.setStatus(actor, id, request.status()), "Department status updated"));
     }
 
     // Restore/soft-delete/hard-delete are IT_ADMIN/TNP_SUPER_ADMIN only even
@@ -71,21 +73,21 @@ public class DepartmentController {
     // internally, this just reflects it at the controller too.
     @PostMapping("/{id}/soft-delete")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN')")
-    public ResponseEntity<Void> softDelete(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
+    public ResponseEntity<YuktiSetuResponse<Void>> softDelete(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
         departmentService.softDelete(actor, id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(YuktiSetuResponse.success(null, "Department soft-deleted"));
     }
 
     @PostMapping("/{id}/restore")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN')")
-    public ResponseEntity<DepartmentResponse> restore(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
-        return ResponseEntity.ok(departmentService.restore(actor, id));
+    public ResponseEntity<YuktiSetuResponse<DepartmentResponse>> restore(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
+        return ResponseEntity.ok(YuktiSetuResponse.success(departmentService.restore(actor, id), "Department restored"));
     }
 
     @PostMapping("/{id}/hard-delete")
     @PreAuthorize("hasAuthority('ROLE_IT_ADMIN')")
-    public ResponseEntity<Void> hardDelete(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
+    public ResponseEntity<YuktiSetuResponse<Void>> hardDelete(@AuthenticationPrincipal UserPrincipal actor, @PathVariable Long id) {
         departmentService.hardDelete(actor, id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(YuktiSetuResponse.success(null, "Department hard-deleted"));
     }
 }

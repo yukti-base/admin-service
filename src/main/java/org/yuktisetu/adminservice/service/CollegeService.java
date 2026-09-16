@@ -66,7 +66,9 @@ public class CollegeService {
         // publish (Kafka, per the architecture doc) here once that service
         // exists. Deliberately left undone rather than faked with a direct
         // SMTP call from inside this transaction.
-        return toResponse(collegeRepository.save(college));
+        College saved = collegeRepository.save(college);
+        log.info("Created college id={} code={} trustId={} actorId={}", saved.getId(), saved.getCode(), trust.getId(), actor.userId());
+        return toResponse(saved);
     }
 
     public List<CollegeResponse> listActiveForTrust(Long trustId) {
@@ -103,7 +105,9 @@ public class CollegeService {
         college.setPrimaryContactPhone(req.primaryContactPhone());
         college.setUpdatedBy(actor.userId());
 
-        return toResponse(collegeRepository.save(college));
+        College saved = collegeRepository.save(college);
+        log.info("Updated college id={} code={} actorId={}", saved.getId(), saved.getCode(), actor.userId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -115,7 +119,9 @@ public class CollegeService {
                 .orElseThrow(() -> new AdminExceptions.NotFoundException("College", id));
         college.setStatus(status);
         college.setUpdatedBy(actor.userId());
-        return toResponse(collegeRepository.save(college));
+        College saved = collegeRepository.save(college);
+        log.info("College id={} status changed to={} actorId={}", saved.getId(), status, actor.userId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -129,6 +135,7 @@ public class CollegeService {
         college.setDeletedAt(Instant.now());
         college.setDeletedBy(actor.userId());
         collegeRepository.save(college);
+        log.info("Soft-deleted college id={} code={} actorId={}", college.getId(), college.getCode(), actor.userId());
     }
 
     @Transactional
@@ -142,7 +149,9 @@ public class CollegeService {
         college.setDeletedAt(null);
         college.setDeletedBy(null);
         college.setUpdatedBy(actor.userId());
-        return toResponse(collegeRepository.save(college));
+        College saved = collegeRepository.save(college);
+        log.info("Restored college id={} code={} actorId={}", saved.getId(), saved.getCode(), actor.userId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -161,6 +170,7 @@ public class CollegeService {
             throw new AdminExceptions.HasDependentRecordsException("College", id, "Department");
         }
         collegeRepository.delete(college);
+        log.info("Hard-deleted college id={} code={} actorId={}", college.getId(), college.getCode(), actor.userId());
     }
 
     private CollegeResponse toResponse(College c) {

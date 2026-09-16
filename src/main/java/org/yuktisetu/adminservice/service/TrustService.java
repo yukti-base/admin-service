@@ -51,7 +51,9 @@ public class TrustService {
         trust.setCreatedBy(actor.userId());
         trust.setUpdatedBy(actor.userId());
 
-        return toResponse(trustRepository.save(trust));
+        Trust saved = trustRepository.save(trust);
+        log.info("Created trust id={} code={} actorId={}", saved.getId(), saved.getCode(), actor.userId());
+        return toResponse(saved);
     }
 
     public List<TrustResponse> listActive() {
@@ -86,7 +88,9 @@ public class TrustService {
         trust.setPrimaryContactPhone(req.primaryContactPhone());
         trust.setUpdatedBy(actor.userId());
 
-        return toResponse(trustRepository.save(trust));
+        Trust saved = trustRepository.save(trust);
+        log.info("Updated trust id={} code={} actorId={}", saved.getId(), saved.getCode(), actor.userId());
+        return toResponse(saved);
     }
 
     // Status toggle -- a reversible pause, NOT the soft-delete/restore flow.
@@ -101,7 +105,9 @@ public class TrustService {
                 .orElseThrow(() -> new AdminExceptions.NotFoundException("Trust", id));
         trust.setStatus(status);
         trust.setUpdatedBy(actor.userId());
-        return toResponse(trustRepository.save(trust));
+        Trust saved = trustRepository.save(trust);
+        log.info("Trust id={} status changed to={} actorId={}", saved.getId(), status, actor.userId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -115,6 +121,7 @@ public class TrustService {
         trust.setDeletedAt(Instant.now());
         trust.setDeletedBy(actor.userId());
         trustRepository.save(trust);
+        log.info("Soft-deleted trust id={} code={} actorId={}", trust.getId(), trust.getCode(), actor.userId());
     }
 
     @Transactional
@@ -128,7 +135,9 @@ public class TrustService {
         trust.setDeletedAt(null);
         trust.setDeletedBy(null);
         trust.setUpdatedBy(actor.userId());
-        return toResponse(trustRepository.save(trust));
+        Trust saved = trustRepository.save(trust);
+        log.info("Restored trust id={} code={} actorId={}", saved.getId(), saved.getCode(), actor.userId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -147,6 +156,7 @@ public class TrustService {
             throw new AdminExceptions.HasDependentRecordsException("Trust", id, "College");
         }
         trustRepository.delete(trust);
+        log.info("Hard-deleted trust id={} code={} actorId={}", trust.getId(), trust.getCode(), actor.userId());
     }
 
     private TrustResponse toResponse(Trust t) {

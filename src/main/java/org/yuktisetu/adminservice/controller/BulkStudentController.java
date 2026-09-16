@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.yuktisetu.adminservice.dto.BulkStudentCreateResponse;
 import org.yuktisetu.adminservice.dto.BulkStudentRequest;
 import org.yuktisetu.adminservice.service.BulkStudentService;
+import org.yuktisetu.core.response.YuktiSetuResponse;
 import org.yuktisetu.core.security.UserPrincipal;
 
 @RequestMapping("/bulk-student")
@@ -22,9 +23,9 @@ public class BulkStudentController {
     private final BulkStudentService bulkStudentService;
 
     @PostMapping
-    public ResponseEntity<BulkStudentCreateResponse> createBulkStudent(@AuthenticationPrincipal UserPrincipal userPrincipal,
+    public ResponseEntity<YuktiSetuResponse<BulkStudentCreateResponse>> createBulkStudent(@AuthenticationPrincipal UserPrincipal userPrincipal,
                                                                        @RequestBody BulkStudentRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(bulkStudentService.createBulkStudentProfile(userPrincipal,
-                request));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(YuktiSetuResponse.success(bulkStudentService.createBulkStudentProfile(userPrincipal, request), 201, "Bulk student import processed"));
     }
 }
