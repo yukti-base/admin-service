@@ -10,23 +10,26 @@ import org.yuktisetu.adminservice.dto.BulkStudentRequest;
 import org.yuktisetu.adminservice.dto.StudentRequest;
 import org.yuktisetu.adminservice.exception.AdminExceptions;
 import org.yuktisetu.core.security.UserPrincipal;
-import org.yuktisetu.db.College;
-import org.yuktisetu.db.Department;
-import org.yuktisetu.db.StudentProfile;
-import org.yuktisetu.db.User;
-import org.yuktisetu.db.UserRoleAssignment;
-import org.yuktisetu.model.RoleType;
-import org.yuktisetu.model.UserStatus;
-import org.yuktisetu.repository.CollegeRepository;
-import org.yuktisetu.repository.DepartmentRepository;
-import org.yuktisetu.repository.StudentProfileRepository;
-import org.yuktisetu.repository.UserRepository;
-import org.yuktisetu.repository.UserRoleAssignmentRepository;
+import org.yuktisetu.institute.db.College;
+import org.yuktisetu.institute.db.Department;
+import org.yuktisetu.profile.db.StudentProfile;
+import org.yuktisetu.identity.db.User;
+import org.yuktisetu.identity.db.UserRoleAssignment;
+import org.yuktisetu.identity.model.RoleType;
+import org.yuktisetu.identity.model.UserStatus;
+import org.yuktisetu.institute.repository.CollegeRepository;
+import org.yuktisetu.institute.repository.DepartmentRepository;
+import org.yuktisetu.profile.repository.StudentProfileRepository;
+import org.yuktisetu.identity.repository.UserRepository;
+import org.yuktisetu.identity.repository.UserRoleAssignmentRepository;
 
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @AllArgsConstructor
@@ -67,11 +70,51 @@ public class BulkStudentService {
             log.info("Starting bulk student processing for {} students", studentRequests.size());
             Date now = new Date();
 
+            // Resolve every college and department code the upload mentions, in two
+            // queries, into O(1) maps. Two reasons this happens here rather than in
+            // the loop: the fleet rule forbids database calls inside a loop, and
+            // resolving per row is what lets a bad code fail ONE row instead of the
+            // whole upload.
+            Set<String> collegeCodes = studentRequests.stream()
+                    .map(StudentRequest::getCollegeCode).filter(Objects::nonNull)
+                    .map(String::trim).filter(c -> !c.isEmpty()).collect(Collectors.toSet());
+            Set<String> departmentCodes = studentRequests.stream()
+                    .map(StudentRequest::getDepartmentCode).filter(Objects::nonNull)
+                    .map(String::trim).filter(c -> !c.isEmpty()).collect(Collectors.toSet());
+
+            Map<String, College> collegesByCode = collegeCodes.isEmpty() ? Map.of()
+                    : collegeRepository.findByCodeInAndIsDeletedFalse(collegeCodes).stream()
+                        .collect(Collectors.toMap(College::getCode, c -> c, (a, b) -> a));
+            Map<String, Department> departmentsByCode = departmentCodes.isEmpty() ? Map.of()
+                    : departmentRepository.findByCodeInAndIsDeletedFalse(departmentCodes).stream()
+                        .collect(Collectors.toMap(Department::getCode, d -> d, (a, b) -> a));
+
+            // Parallel to successfulRequests: the scope resolved for each surviving row.
+            List<College> resolvedColleges = new ArrayList<>();
+            List<Department> resolvedDepartments = new ArrayList<>();
+
             for (int i = 0; i < studentRequests.size(); i++) {
                 StudentRequest studentRequest = studentRequests.get(i);
                 try {
                     // Validate required fields
                     validateStudentRequest(studentRequest, i);
+
+                    // Per-row scope resolution. Previously the college and department
+                    // were read from students.getFirst() and applied to EVERY row, so
+                    // a CSV spanning two departments filed everyone under the first
+                    // row's department -- silently, with the import reporting success.
+                    College rowCollege = collegesByCode.get(studentRequest.getCollegeCode().trim());
+                    if (rowCollege == null) {
+                        throw new AdminExceptions.InvalidRequestException(String.format(
+                                "Student at position %d: unknown college code '%s'",
+                                i + 1, studentRequest.getCollegeCode()));
+                    }
+                    Department rowDepartment = departmentsByCode.get(studentRequest.getDepartmentCode().trim());
+                    if (rowDepartment == null) {
+                        throw new AdminExceptions.InvalidRequestException(String.format(
+                                "Student at position %d: unknown department code '%s'",
+                                i + 1, studentRequest.getDepartmentCode()));
+                    }
 
                     // Generate password: lastname.first 5 prn digits
                     String password = generatePassword(studentRequest.getLastName(), studentRequest.getPrn());
@@ -119,6 +162,8 @@ public class BulkStudentService {
                     usersToSave.add(user);
                     studentProfilesToSave.add(studentProfile);
                     successfulRequests.add(studentRequest);
+                    resolvedColleges.add(rowCollege);
+                    resolvedDepartments.add(rowDepartment);
 
                     // Prepare success response
                     BulkStudentCreateResponse.BulkStudentSuccessDto successDto = BulkStudentCreateResponse.BulkStudentSuccessDto.builder()
@@ -154,15 +199,6 @@ public class BulkStudentService {
                             studentRequest.getEmail() != null ? studentRequest.getEmail() : "unknown", e.getMessage());
                 }
             }
-            String collegeCode = request.getStudents().getFirst().getCollegeCode();
-            String departmentCode = request.getStudents().getFirst().getDepartmentCode();
-
-            College college = collegeRepository.findByCodeAndIsDeletedFalse(collegeCode);
-            Department department = departmentRepository.findByCodeAndIsDeletedFalse(departmentCode);
-
-            if (Objects.isNull(college) || Objects.isNull(department)) {
-                throw new AdminExceptions.InvalidRequestException("Invalid college or department code provided");
-            }
             // Save all users in batch
             List<User> savedUsers = new ArrayList<>();
             if (!usersToSave.isEmpty()) {
@@ -182,8 +218,8 @@ public class BulkStudentService {
                     assignment.setAssignedAt(new Date());
                     assignment.setAssignedBy(loggedInUser);
                     assignment.setActive(true);
-                    assignment.setCollege(college);
-                    assignment.setDepartment(department);
+                    assignment.setCollege(resolvedColleges.get(i));
+                    assignment.setDepartment(resolvedDepartments.get(i));
                     assignment.setDegree(successfulRequests.get(i).getDegree());
                     userRoleAssignments.add(assignment);
 

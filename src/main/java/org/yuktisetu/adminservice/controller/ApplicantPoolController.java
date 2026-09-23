@@ -23,7 +23,7 @@ import org.yuktisetu.adminservice.dto.ManualApplicantRequest;
 import org.yuktisetu.adminservice.service.ApplicantPoolService;
 import org.yuktisetu.core.response.YuktiSetuResponse;
 import org.yuktisetu.core.security.UserPrincipal;
-import org.yuktisetu.model.ApplicationStatus;
+import org.yuktisetu.drive.model.ApplicationStatus;
 
 import java.util.List;
 import java.util.Map;

@@ -5,11 +5,11 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
-import org.yuktisetu.model.JobType;
-import org.yuktisetu.model.PackageBasis;
-import org.yuktisetu.model.ShortlistingMode;
-import org.yuktisetu.model.StipendPeriod;
-import org.yuktisetu.model.WorkMode;
+import org.yuktisetu.drive.model.JobType;
+import org.yuktisetu.drive.model.PackageBasis;
+import org.yuktisetu.drive.model.ShortlistingMode;
+import org.yuktisetu.drive.model.StipendPeriod;
+import org.yuktisetu.drive.model.WorkMode;
 
 import java.math.BigDecimal;
 import java.time.Instant;

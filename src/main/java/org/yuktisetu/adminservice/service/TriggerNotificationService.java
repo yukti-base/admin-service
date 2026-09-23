@@ -10,8 +10,8 @@ import org.yuktisetu.adminservice.dto.BulkStudentCreateResponse;
 import org.yuktisetu.core.notification.config.EmailProperties;
 import org.yuktisetu.core.notification.model.InviteRecipient;
 import org.yuktisetu.core.notification.service.EmailService;
-import org.yuktisetu.db.User;
-import org.yuktisetu.repository.UserRepository;
+import org.yuktisetu.identity.db.User;
+import org.yuktisetu.identity.repository.UserRepository;
 
 import java.time.Duration;
 import java.util.ArrayList;

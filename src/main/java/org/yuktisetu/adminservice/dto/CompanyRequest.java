@@ -3,8 +3,8 @@ package org.yuktisetu.adminservice.dto;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
-import org.yuktisetu.model.CompanyTier;
-import org.yuktisetu.model.CompanyType;
+import org.yuktisetu.drive.model.CompanyTier;
+import org.yuktisetu.drive.model.CompanyType;
 
 public record CompanyRequest(
         @NotBlank @Size(max = 255) String name,

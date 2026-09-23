@@ -28,7 +28,7 @@ import org.yuktisetu.adminservice.dto.CompanyStatusChangeRequest;
 import org.yuktisetu.adminservice.service.CompanyService;
 import org.yuktisetu.core.response.YuktiSetuResponse;
 import org.yuktisetu.core.security.UserPrincipal;
-import org.yuktisetu.model.CompanyStatus;
+import org.yuktisetu.drive.model.CompanyStatus;
 
 import java.util.List;
 

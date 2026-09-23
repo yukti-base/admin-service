@@ -15,34 +15,37 @@ import org.yuktisetu.adminservice.dto.PostingTargetsRequest;
 import org.yuktisetu.adminservice.exception.AdminExceptions;
 import org.yuktisetu.adminservice.policy.PlacementDrivePolicy;
 import org.yuktisetu.core.exception.ApiException;
+import org.springframework.web.multipart.MultipartFile;
 import org.yuktisetu.core.security.UserPrincipal;
-import org.yuktisetu.db.College;
-import org.yuktisetu.db.Company;
-import org.yuktisetu.db.Department;
-import org.yuktisetu.db.JobPosting;
-import org.yuktisetu.db.JobPostingDocument;
-import org.yuktisetu.db.PostingLocation;
-import org.yuktisetu.db.PostingSkill;
-import org.yuktisetu.db.PostingTarget;
-import org.yuktisetu.events.DriveTopics;
-import org.yuktisetu.events.PostingPublishedEvent;
-import org.yuktisetu.model.CompanyStatus;
-import org.yuktisetu.model.EligibilityRunReason;
-import org.yuktisetu.model.PackageBasis;
-import org.yuktisetu.model.PostingDocumentType;
-import org.yuktisetu.model.PostingStatus;
-import org.yuktisetu.model.PostingStatusTransitions;
-import org.yuktisetu.model.ShortlistingMode;
-import org.yuktisetu.repository.CollegeRepository;
-import org.yuktisetu.repository.CompanyRepository;
-import org.yuktisetu.repository.DepartmentRepository;
-import org.yuktisetu.repository.JobPostingDocumentRepository;
-import org.yuktisetu.repository.JobPostingRepository;
-import org.yuktisetu.repository.PostingEligibilityCriteriaRepository;
-import org.yuktisetu.repository.PostingLocationRepository;
-import org.yuktisetu.repository.PostingReapplicationPolicyRepository;
-import org.yuktisetu.repository.PostingSkillRepository;
-import org.yuktisetu.repository.PostingTargetRepository;
+import org.yuktisetu.core.storage.FileStorageService;
+import org.yuktisetu.core.storage.StoredFile;
+import org.yuktisetu.institute.db.College;
+import org.yuktisetu.drive.db.Company;
+import org.yuktisetu.institute.db.Department;
+import org.yuktisetu.drive.db.JobPosting;
+import org.yuktisetu.drive.db.JobPostingDocument;
+import org.yuktisetu.drive.db.PostingLocation;
+import org.yuktisetu.drive.db.PostingSkill;
+import org.yuktisetu.drive.db.PostingTarget;
+import org.yuktisetu.messaging.events.DriveTopics;
+import org.yuktisetu.messaging.events.PostingPublishedEvent;
+import org.yuktisetu.drive.model.CompanyStatus;
+import org.yuktisetu.drive.model.EligibilityRunReason;
+import org.yuktisetu.drive.model.PackageBasis;
+import org.yuktisetu.drive.model.PostingDocumentType;
+import org.yuktisetu.drive.model.PostingStatus;
+import org.yuktisetu.drive.model.PostingStatusTransitions;
+import org.yuktisetu.drive.model.ShortlistingMode;
+import org.yuktisetu.institute.repository.CollegeRepository;
+import org.yuktisetu.drive.repository.CompanyRepository;
+import org.yuktisetu.institute.repository.DepartmentRepository;
+import org.yuktisetu.drive.repository.JobPostingDocumentRepository;
+import org.yuktisetu.drive.repository.JobPostingRepository;
+import org.yuktisetu.drive.repository.PostingEligibilityCriteriaRepository;
+import org.yuktisetu.drive.repository.PostingLocationRepository;
+import org.yuktisetu.drive.repository.PostingReapplicationPolicyRepository;
+import org.yuktisetu.drive.repository.PostingSkillRepository;
+import org.yuktisetu.drive.repository.PostingTargetRepository;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -66,6 +69,7 @@ import java.util.Set;
 public class JobPostingService {
 
     private final JobPostingRepository postingRepository;
+    private final FileStorageService storage;
     private final CompanyRepository companyRepository;
     private final CollegeRepository collegeRepository;
     private final DepartmentRepository departmentRepository;
@@ -423,6 +427,55 @@ public class JobPostingService {
      * convenience -- a drive students can apply to without being able to read
      * what they are applying for is not a drive.
      */
+    /**
+     * Uploads a job-description file and attaches it to the posting in one call.
+     *
+     * Synchronous by design: the TnP is sitting in the drive builder waiting, so
+     * the file goes to storage and the stored key comes straight back with the
+     * response. The pre-existing addDocument(..., PostingDocumentRequest) stays
+     * for the case where a key already exists -- this method is the front door
+     * that produces one.
+     *
+     * The upload happens BEFORE the row is written. A failed upload then leaves
+     * no document row pointing at a file that does not exist; the reverse order
+     * would attach a broken link to a live drive.
+     */
+    @Transactional
+    public PostingDocumentResponse uploadDocument(UserPrincipal actor, Long postingId,
+                                                  PostingDocumentType docType,
+                                                  MultipartFile file, Boolean primary) {
+        try {
+            if (!policy.canDraftPosting(actor)) {
+                throw new AdminExceptions.InsufficientAuthorityException();
+            }
+            // Validated before the upload so an unauthorised or closed posting
+            // never costs a round trip to the storage provider.
+            requireEditable(postingId);
+
+            StoredFile stored = storage.upload(file, "postings/" + postingId + "/" + docType.name().toLowerCase());
+
+            log.info("JD document uploaded: postingId={} type={} key={} bytes={} actorId={}",
+                    postingId, docType, stored.storageKey(), stored.sizeBytes(), actor.userId());
+
+            return doAddDocument(actor, postingId, new PostingDocumentRequest(
+                    docType,
+                    stored.originalFileName(),
+                    stored.storageKey(),
+                    stored.url(),
+                    stored.contentType(),
+                    stored.sizeBytes(),
+                    primary));
+
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to upload document for posting id={} actorId={}: {}",
+                    postingId, actor.userId(), e.getMessage(), e);
+            throw new AdminExceptions.InvalidRequestException(
+                    "Could not upload the document. Please try again.");
+        }
+    }
+
     @Transactional
     public PostingDocumentResponse addDocument(UserPrincipal actor, Long postingId, PostingDocumentRequest req) {
         try {
@@ -448,6 +501,7 @@ public class JobPostingService {
         doc.setDocType(req.docType());
         doc.setFileName(req.fileName().trim());
         doc.setStorageKey(req.storageKey().trim());
+        doc.setUrl(req.url());
         doc.setContentType(req.contentType());
         doc.setSizeBytes(req.sizeBytes());
         doc.setPrimary(Boolean.TRUE.equals(req.primary()));
@@ -474,7 +528,7 @@ public class JobPostingService {
     private PostingDocumentResponse toResponse(JobPostingDocument d) {
         return new PostingDocumentResponse(
                 d.getId(), d.getPosting().getId(), d.getDocType(), d.getFileName(),
-                d.getStorageKey(), d.getContentType(), d.getSizeBytes(), d.isPrimary(),
+                d.getStorageKey(), d.getUrl(), d.getContentType(), d.getSizeBytes(), d.isPrimary(),
                 d.getUploadedBy(), d.getCreatedAt());
     }
 

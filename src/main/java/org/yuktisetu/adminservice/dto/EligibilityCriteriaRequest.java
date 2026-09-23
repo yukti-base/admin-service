@@ -6,12 +6,12 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-import org.yuktisetu.model.AlternativeGateMode;
-import org.yuktisetu.model.AptitudeExam;
-import org.yuktisetu.model.CriterionOperator;
-import org.yuktisetu.model.CriterionSource;
-import org.yuktisetu.model.CriterionValueType;
-import org.yuktisetu.model.MissingDataPolicy;
+import org.yuktisetu.drive.model.AlternativeGateMode;
+import org.yuktisetu.drive.model.AptitudeExam;
+import org.yuktisetu.drive.model.CriterionOperator;
+import org.yuktisetu.drive.model.CriterionSource;
+import org.yuktisetu.drive.model.CriterionValueType;
+import org.yuktisetu.drive.model.MissingDataPolicy;
 
 import java.math.BigDecimal;
 import java.util.List;

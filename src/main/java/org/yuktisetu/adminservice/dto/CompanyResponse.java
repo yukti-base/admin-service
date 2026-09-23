@@ -1,8 +1,8 @@
 package org.yuktisetu.adminservice.dto;
 
-import org.yuktisetu.model.CompanyStatus;
-import org.yuktisetu.model.CompanyTier;
-import org.yuktisetu.model.CompanyType;
+import org.yuktisetu.drive.model.CompanyStatus;
+import org.yuktisetu.drive.model.CompanyTier;
+import org.yuktisetu.drive.model.CompanyType;
 
 import java.time.Instant;
 

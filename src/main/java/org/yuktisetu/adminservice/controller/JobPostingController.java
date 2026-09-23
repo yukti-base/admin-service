@@ -23,19 +23,26 @@ import org.yuktisetu.adminservice.dto.EligibilityCriteriaResponse;
 import org.yuktisetu.adminservice.dto.JobPostingRequest;
 import org.yuktisetu.adminservice.dto.JobPostingResponse;
 import org.yuktisetu.adminservice.dto.PostingCloseRequest;
+import org.yuktisetu.adminservice.dto.ParseJdRequest;
+import org.yuktisetu.adminservice.dto.ParsedJdResponse;
 import org.yuktisetu.adminservice.dto.PostingDocumentRequest;
 import org.yuktisetu.adminservice.dto.PostingDocumentResponse;
 import org.yuktisetu.adminservice.dto.PostingTargetsRequest;
 import org.yuktisetu.adminservice.dto.ReapplicationPolicyRequest;
 import org.yuktisetu.adminservice.dto.ReapplicationPolicyResponse;
 import org.yuktisetu.adminservice.service.ApplicantPoolService;
+import org.yuktisetu.adminservice.jd.JdParser;
 import org.yuktisetu.adminservice.service.JobPostingService;
 import org.yuktisetu.adminservice.service.PostingEligibilityService;
 import org.yuktisetu.core.response.YuktiSetuResponse;
 import org.yuktisetu.core.security.UserPrincipal;
-import org.yuktisetu.model.PostingStatus;
+import org.yuktisetu.drive.model.PostingStatus;
 
 import java.util.List;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
+import org.yuktisetu.drive.model.PostingDocumentType;
 
 /**
  * Drive authoring. A posting is assembled in DRAFT across several calls -- JD,
@@ -58,6 +65,7 @@ public class JobPostingController {
     private final JobPostingService postingService;
     private final PostingEligibilityService eligibilityService;
     private final ApplicantPoolService poolService;
+    private final JdParser jdParser;
 
     @PostMapping
     @PreAuthorize(DRAFTERS)
@@ -139,6 +147,49 @@ public class JobPostingController {
      * Register a JD (or other document) already uploaded to object storage.
      * Required before publish -- the bytes never pass through this service.
      */
+        /**
+     * Upload a job-description file and attach it in one synchronous call.
+     *
+     * The TnP is waiting in the drive builder, so the response carries the stored
+     * key and the document row -- no second request, no polling. The JSON variant
+     * below stays for the case where a key already exists.
+     */
+    /**
+     * Reads pasted JD text into drive fields. Pure function: nothing is written,
+     * nothing is persisted, no posting id is involved. The caller reviews the
+     * proposals field by field and then creates or updates a draft as normal.
+     *
+     * Separate from the posting lifecycle on purpose -- it is used BEFORE a
+     * posting exists, and keeping it side-effect-free is what makes it safe for
+     * a coordinator to paste, look, fix the text and paste again.
+     */
+    @PostMapping("/parse-jd")
+    @PreAuthorize(DRAFTERS)
+    public ResponseEntity<YuktiSetuResponse<ParsedJdResponse>> parseJd(
+            @AuthenticationPrincipal UserPrincipal actor,
+            @RequestBody @Valid ParseJdRequest request) {
+
+        log.info("POST /postings/parse-jd chars={} actorId={}", request.text().length(), actor.userId());
+        return ResponseEntity.ok(YuktiSetuResponse.success(
+                jdParser.parse(request.text()), "Job description parsed"));
+    }
+
+    @PostMapping(value = "/{id}/documents/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize(DRAFTERS)
+    public ResponseEntity<YuktiSetuResponse<PostingDocumentResponse>> uploadDocument(
+            @AuthenticationPrincipal UserPrincipal actor,
+            @PathVariable Long id,
+            @RequestPart("file") MultipartFile file,
+            @RequestParam("docType") PostingDocumentType docType,
+            @RequestParam(value = "primary", required = false) Boolean primary) {
+
+        log.info("POST /postings/{}/documents/upload type={} size={} actorId={}",
+                id, docType, file.getSize(), actor.userId());
+
+        return ResponseEntity.status(201).body(YuktiSetuResponse.success(
+                postingService.uploadDocument(actor, id, docType, file, primary), 201, "Document uploaded"));
+    }
+
     @PostMapping("/{id}/documents")
     @PreAuthorize(DRAFTERS)
     public ResponseEntity<YuktiSetuResponse<PostingDocumentResponse>> addDocument(

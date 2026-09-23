@@ -42,9 +42,25 @@ dependencies {
 
     implementation 'org.yuktisetu:core:1.0.0-SNAPSHOT'
     implementation 'org.yuktisetu:institute-dal:1.0.0-SNAPSHOT'
-    implementation 'org.yuktisetu:user-dal:1.0.0-SNAPSHOT'
+    implementation 'org.yuktisetu:identity-dal:1.0.0-SNAPSHOT'
+    implementation 'org.yuktisetu:profile-dal:1.0.0-SNAPSHOT'
     implementation 'org.yuktisetu:drive-dal:1.0.0-SNAPSHOT'
     implementation 'org.yuktisetu:messaging-dal:1.0.0-SNAPSHOT'
+
+    // Without this, OutboxWriter had nothing to drain its rows: admin-service
+    // wrote posting.published events into outbox_events on every publish and
+    // they sat PENDING forever, because the relay that ships them to Kafka
+    // could not exist. messaging-dal supplies the table and the contracts; this
+    // supplies the transport.
+    //
+    // Note it is the STARTER, not a bare spring-kafka dependency. Boot 4 split
+    // spring-boot-autoconfigure into per-technology modules and KafkaAutoConfiguration
+    // moved out of it -- Boot 3.4's autoconfigure jar lists it, Boot 4.1's does not.
+    // With only the bare library there is no KafkaTemplate, no KafkaAdmin, and
+    // @KafkaListener is silently ignored: the beans are created, the conditions
+    // report "matched", and nothing ever connects to a broker. The starter brings
+    // spring-boot-kafka (the autoconfiguration) alongside the library.
+    implementation 'org.springframework.boot:spring-boot-starter-kafka'
 
 }
 

@@ -17,22 +17,22 @@ import org.yuktisetu.adminservice.policy.PlacementDrivePolicy;
 import org.yuktisetu.core.cache.CacheNames;
 import org.yuktisetu.core.exception.ApiException;
 import org.yuktisetu.core.security.UserPrincipal;
-import org.yuktisetu.db.ApplicationStatusHistory;
-import org.yuktisetu.db.EligibilityRun;
-import org.yuktisetu.db.JobApplication;
-import org.yuktisetu.db.JobPosting;
-import org.yuktisetu.db.PostingTarget;
-import org.yuktisetu.db.User;
-import org.yuktisetu.model.ActorKind;
-import org.yuktisetu.model.ApplicationSource;
-import org.yuktisetu.model.ApplicationStatus;
-import org.yuktisetu.model.EligibilityRunReason;
-import org.yuktisetu.repository.ApplicationStatusHistoryRepository;
-import org.yuktisetu.repository.EligibilityRunRepository;
-import org.yuktisetu.repository.JobApplicationRepository;
-import org.yuktisetu.repository.JobPostingRepository;
-import org.yuktisetu.repository.PostingTargetRepository;
-import org.yuktisetu.repository.UserRepository;
+import org.yuktisetu.drive.db.ApplicationStatusHistory;
+import org.yuktisetu.drive.db.EligibilityRun;
+import org.yuktisetu.drive.db.JobApplication;
+import org.yuktisetu.drive.db.JobPosting;
+import org.yuktisetu.drive.db.PostingTarget;
+import org.yuktisetu.identity.db.User;
+import org.yuktisetu.drive.model.ActorKind;
+import org.yuktisetu.drive.model.ApplicationSource;
+import org.yuktisetu.drive.model.ApplicationStatus;
+import org.yuktisetu.drive.model.EligibilityRunReason;
+import org.yuktisetu.drive.repository.ApplicationStatusHistoryRepository;
+import org.yuktisetu.drive.repository.EligibilityRunRepository;
+import org.yuktisetu.drive.repository.JobApplicationRepository;
+import org.yuktisetu.drive.repository.JobPostingRepository;
+import org.yuktisetu.drive.repository.PostingTargetRepository;
+import org.yuktisetu.identity.repository.UserRepository;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
@@ -376,7 +376,8 @@ public class ApplicantPoolService {
                 r[11] == null ? null : ApplicationStatus.valueOf(String.valueOf(r[11])),
                 r[12] == null ? null : ApplicationSource.valueOf(String.valueOf(r[12])),
                 toInstant(r[13]),
-                (String) r[14]);
+                (String) r[14],
+                (String) r[15], (String) r[16]);
     }
 
     private ApplicantResponse toApplicant(JobApplication a, User u) {
@@ -386,7 +387,8 @@ public class ApplicantPoolService {
                 u == null ? null : u.getEmail(),
                 u == null ? null : u.getPhone(),
                 null, null, null, null, null,
-                a.getStatus(), a.getSource(), a.getAppliedAt(), a.getDisqualificationReason());
+                a.getStatus(), a.getSource(), a.getAppliedAt(), a.getDisqualificationReason(),
+                a.getResumeUrl(), a.getResumeFileName());
     }
 
     private String fullName(String first, String last) {

@@ -1,7 +1,7 @@
 package org.yuktisetu.adminservice.dto;
 
-import org.yuktisetu.model.EligibilityRunReason;
-import org.yuktisetu.model.EligibilityRunStatus;
+import org.yuktisetu.drive.model.EligibilityRunReason;
+import org.yuktisetu.drive.model.EligibilityRunStatus;
 
 import java.time.Instant;
 import java.util.Map;

@@ -2,7 +2,7 @@ package org.yuktisetu.adminservice.dto;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
-import org.yuktisetu.model.ReapplicationStance;
+import org.yuktisetu.drive.model.ReapplicationStance;
 
 import java.math.BigDecimal;
 

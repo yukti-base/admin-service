@@ -1,6 +1,6 @@
 package org.yuktisetu.adminservice.dto;
 
-import org.yuktisetu.model.ReapplicationStance;
+import org.yuktisetu.drive.model.ReapplicationStance;
 
 import java.math.BigDecimal;
 

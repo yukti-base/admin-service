@@ -2,7 +2,7 @@ package org.yuktisetu.adminservice.dto;
 
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-import org.yuktisetu.model.CompanyStatus;
+import org.yuktisetu.drive.model.CompanyStatus;
 
 /**
  * reason is required when moving to BLACKLISTED. Cutting a recruiter off across

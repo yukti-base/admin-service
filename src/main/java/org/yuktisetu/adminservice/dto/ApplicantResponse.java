@@ -1,7 +1,7 @@
 package org.yuktisetu.adminservice.dto;
 
-import org.yuktisetu.model.ApplicationSource;
-import org.yuktisetu.model.ApplicationStatus;
+import org.yuktisetu.drive.model.ApplicationSource;
+import org.yuktisetu.drive.model.ApplicationStatus;
 
 import java.time.Instant;
 
@@ -24,5 +24,13 @@ public record ApplicantResponse(
         ApplicationStatus status,
         ApplicationSource source,
         Instant appliedAt,
-        String disqualificationReason
+        String disqualificationReason,
+        /**
+         * The resume submitted with THIS application, as snapshotted at apply
+         * time. Null when the student applied without one. Delivery is public by
+         * design, so this URL is directly openable and survives being written
+         * into an exported spreadsheet that is later sent to a company.
+         */
+        String resumeUrl,
+        String resumeFileName
 ) {}
