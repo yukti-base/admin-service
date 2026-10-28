@@ -29,6 +29,9 @@ import org.yuktisetu.drive.db.PostingSkill;
 import org.yuktisetu.drive.db.PostingTarget;
 import org.yuktisetu.messaging.events.DriveTopics;
 import org.yuktisetu.messaging.events.PostingPublishedEvent;
+import org.yuktisetu.drive.model.ActorKind;
+import org.yuktisetu.drive.model.ApplicationStatus;
+import org.yuktisetu.drive.model.ApplicationStatusTransitions;
 import org.yuktisetu.drive.model.CompanyStatus;
 import org.yuktisetu.drive.model.EligibilityRunReason;
 import org.yuktisetu.drive.model.PackageBasis;
@@ -38,7 +41,10 @@ import org.yuktisetu.drive.model.PostingStatusTransitions;
 import org.yuktisetu.drive.model.ShortlistingMode;
 import org.yuktisetu.institute.repository.CollegeRepository;
 import org.yuktisetu.drive.repository.CompanyRepository;
+import org.yuktisetu.institute.db.Degree;
+import org.yuktisetu.institute.repository.DegreeRepository;
 import org.yuktisetu.institute.repository.DepartmentRepository;
+import org.yuktisetu.drive.repository.JobApplicationRepository;
 import org.yuktisetu.drive.repository.JobPostingDocumentRepository;
 import org.yuktisetu.drive.repository.JobPostingRepository;
 import org.yuktisetu.drive.repository.PostingEligibilityCriteriaRepository;
@@ -73,17 +79,21 @@ public class JobPostingService {
     private final CompanyRepository companyRepository;
     private final CollegeRepository collegeRepository;
     private final DepartmentRepository departmentRepository;
+    private final DegreeRepository degreeRepository;
     private final PostingTargetRepository targetRepository;
     private final PostingSkillRepository skillRepository;
     private final PostingLocationRepository locationRepository;
     private final PostingEligibilityCriteriaRepository criteriaRepository;
     private final PostingReapplicationPolicyRepository reapplicationPolicyRepository;
+    private final PostingScoringService scoringService;
     private final JobPostingDocumentRepository documentRepository;
+    private final JobApplicationRepository applicationRepository;
     private final PlacementDrivePolicy policy;
     private final OutboxWriter outboxWriter;
     private final EligibilityResolutionService resolutionService;
     private final EligibilityRunLauncher runLauncher;
     private final ApplicantPoolService poolService;
+    private final PostingCancellationCascade cancellationCascade;
 
     @Transactional
     public JobPostingResponse createDraft(UserPrincipal actor, JobPostingRequest req) {
@@ -148,6 +158,14 @@ public class JobPostingService {
             throw new AdminExceptions.InsufficientAuthorityException();
         }
         JobPosting posting = requireEditable(id);
+        if (posting.getStatus() == PostingStatus.PUBLISHED
+                && (req.applicationDeadline() == null || !req.applicationDeadline().isAfter(Instant.now()))) {
+            // A live drive whose deadline is moved into the past would be sealed by
+            // the sweep on its next tick, with nobody having decided to close it.
+            throw new AdminExceptions.InvalidRequestException(
+                    "The application deadline of a live drive must stay in the future. "
+                            + "To stop the drive, cancel it instead.");
+        }
         apply(posting, req);
         posting.setUpdatedBy(actor.userId());
         JobPosting saved = postingRepository.save(posting);
@@ -200,7 +218,9 @@ public class JobPostingService {
                 }
             }
 
-            String key = targetKey(t.collegeId(), t.departmentId(), t.batchYear(), t.degree());
+            Degree degree = resolveTargetDegree(college, department, t.degreeId());
+
+            String key = targetKey(t.collegeId(), t.departmentId(), t.batchYear(), t.degreeId());
             if (!seen.add(key)) {
                 throw new AdminExceptions.DuplicateTargetException(key);
             }
@@ -210,7 +230,7 @@ public class JobPostingService {
             target.setCollege(college);
             target.setDepartment(department);
             target.setBatchYear(t.batchYear());
-            target.setDegree(t.degree());
+            target.setDegree(degree);
             target.setTargetKey(key);
             target.setCreatedBy(actor.userId());
             target.setUpdatedBy(actor.userId());
@@ -240,7 +260,7 @@ public class JobPostingService {
             return doPublish(actor, id);
         } catch (ApiException e) {
             // Publish refusals are all specific and actionable -- missing targets,
-            // no JD, deadline in the past -- and the coordinator needs to read them
+            // no weights, deadline in the past -- and the coordinator needs to read them
             // verbatim to know what to fix.
             throw e;
         } catch (Exception e) {
@@ -259,41 +279,9 @@ public class JobPostingService {
                     "JobPosting", posting.getStatus().name(), PostingStatus.PUBLISHED.name());
         }
 
-        List<PostingTarget> targets = targetRepository.findByPosting_IdAndIsDeletedFalse(id);
-        if (targets.isEmpty()) {
-            throw new AdminExceptions.PostingNotPublishableException(
-                    "it has no targets, so no student would ever see it");
-        }
-
-        List<Long> targetCollegeIds = targets.stream().map(PostingTarget::getCollegeId).distinct().toList();
-        if (!policy.canPublishPosting(actor, targetCollegeIds)) {
-            throw new AdminExceptions.InsufficientAuthorityException();
-        }
-
+        List<PostingTarget> targets = requirePublishable(actor, posting);
         Company company = posting.getCompany();
-        if (company.isDeleted() || company.getStatus() == CompanyStatus.BLACKLISTED
-                || company.getStatus() == CompanyStatus.INACTIVE) {
-            throw new AdminExceptions.CompanyNotActiveException(company.getName(), company.getStatus().name());
-        }
-
-        if (!criteriaRepository.existsByPosting_IdAndIsDeletedFalse(id)) {
-            throw new AdminExceptions.PostingNotPublishableException(
-                    "no eligibility criteria have been set");
-        }
-        if (!reapplicationPolicyRepository.existsByPosting_IdAndIsDeletedFalse(id)) {
-            throw new AdminExceptions.PostingNotPublishableException(
-                    "no re-application policy has been set");
-        }
-        if (documentRepository.countByPosting_IdAndDocTypeAndIsDeletedFalse(
-                id, PostingDocumentType.JD) == 0) {
-            throw new AdminExceptions.PostingNotPublishableException(
-                    "no JD document has been attached");
-        }
-        if (posting.getApplicationDeadline() == null
-                || !posting.getApplicationDeadline().isAfter(Instant.now())) {
-            throw new AdminExceptions.PostingNotPublishableException(
-                    "the application deadline is not in the future");
-        }
+        List<Long> targetCollegeIds = targets.stream().map(PostingTarget::getCollegeId).distinct().toList();
 
         Instant now = Instant.now();
         posting.setStatus(PostingStatus.PUBLISHED);
@@ -319,7 +307,8 @@ public class JobPostingService {
                             saved.getApplicationDeadline(),
                             targets.stream()
                                     .map(t -> new PostingPublishedEvent.TargetRef(
-                                            t.getCollegeId(), t.getDepartmentId(), t.getBatchYear(), t.getDegree()))
+                                            t.getCollegeId(), t.getDepartmentId(), t.getBatchYear(),
+                                            t.getDegree() == null ? null : t.getDegree().getName()))
                                     .toList(),
                             actor.userId()));
         }
@@ -327,6 +316,94 @@ public class JobPostingService {
         log.info("Published posting id={} companyId={} targets={} deadline={} actorId={}",
                 id, company.getId(), targetCollegeIds, saved.getApplicationDeadline(), actor.userId());
         return toResponse(saved);
+    }
+
+    /**
+     * Re-publish: apply the edits made to a LIVE drive.
+     *
+     * Edits to a published drive are saved as they are made, but nothing about who
+     * is eligible changes until this runs. It re-checks everything publish checks,
+     * then (after commit, from the controller) re-resolves eligibility. That
+     * resolution disqualifies applicants who no longer qualify and tells everyone
+     * who does that the drive was updated.
+     */
+    @Transactional
+    public JobPostingResponse republish(UserPrincipal actor, Long id) {
+        try {
+            return doRepublish(actor, id);
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to re-publish posting id={} actorId={}: {}", id, actor.userId(), e.getMessage(), e);
+            throw new AdminExceptions.InvalidRequestException(
+                    "Could not re-publish the drive. Please try again.");
+        }
+    }
+
+    private JobPostingResponse doRepublish(UserPrincipal actor, Long id) {
+        JobPosting posting = postingRepository.findByIdAndIsDeletedFalse(id)
+                .orElseThrow(() -> new AdminExceptions.NotFoundException("JobPosting", id));
+        if (posting.getStatus() != PostingStatus.PUBLISHED) {
+            throw new AdminExceptions.PostingNotPublishableException(
+                    "only a live (published) drive can be re-published; this one is " + posting.getStatus());
+        }
+        requirePublishable(actor, posting);
+
+        posting.setUpdatedBy(actor.userId());
+        JobPosting saved = postingRepository.save(posting);
+        log.info("Re-published posting id={} deadline={} actorId={}",
+                id, saved.getApplicationDeadline(), actor.userId());
+        return toResponse(saved);
+    }
+
+    /** Queues the eligibility re-resolution that gives a re-publish its effect. */
+    public void startRepublishResolution(UserPrincipal actor, Long postingId) {
+        startResolution(actor, postingId, EligibilityRunReason.CRITERIA_CHANGED);
+    }
+
+    /**
+     * Everything that must hold before a drive goes live, shared by publish and
+     * re-publish so a live drive can never be edited into a state that publish
+     * itself would have refused. Returns the targets it loaded.
+     */
+    private List<PostingTarget> requirePublishable(UserPrincipal actor, JobPosting posting) {
+        Long id = posting.getId();
+        List<PostingTarget> targets = targetRepository.findByPosting_IdAndIsDeletedFalse(id);
+        if (targets.isEmpty()) {
+            throw new AdminExceptions.PostingNotPublishableException(
+                    "it has no targets, so no student would ever see it");
+        }
+
+        List<Long> targetCollegeIds = targets.stream().map(PostingTarget::getCollegeId).distinct().toList();
+        if (!policy.canPublishPosting(actor, targetCollegeIds)) {
+            throw new AdminExceptions.InsufficientAuthorityException();
+        }
+
+        Company company = posting.getCompany();
+        if (company.isDeleted() || company.getStatus() == CompanyStatus.BLACKLISTED
+                || company.getStatus() == CompanyStatus.INACTIVE) {
+            throw new AdminExceptions.CompanyNotActiveException(company.getName(), company.getStatus().name());
+        }
+
+        if (!criteriaRepository.existsByPosting_IdAndIsDeletedFalse(id)) {
+            throw new AdminExceptions.PostingNotPublishableException(
+                    "no eligibility criteria have been set");
+        }
+        if (!reapplicationPolicyRepository.existsByPosting_IdAndIsDeletedFalse(id)) {
+            throw new AdminExceptions.PostingNotPublishableException(
+                    "no re-application policy has been set");
+        }
+        if (posting.getShortlistingMode() == ShortlistingMode.COMPOSITE_SCORE
+                && !scoringService.isConfigured(id)) {
+            throw new AdminExceptions.PostingNotPublishableException(
+                    "no scoring weights have been set");
+        }
+        if (posting.getApplicationDeadline() == null
+                || !posting.getApplicationDeadline().isAfter(Instant.now())) {
+            throw new AdminExceptions.PostingNotPublishableException(
+                    "the application deadline is not in the future");
+        }
+        return targets;
     }
 
     /**
@@ -342,48 +419,20 @@ public class JobPostingService {
      * the re-evaluate endpoint, and the FAILED run row records what happened.
      */
     public void startEligibilityResolution(UserPrincipal actor, Long postingId) {
+        startResolution(actor, postingId, EligibilityRunReason.PUBLISH);
+    }
+
+    private void startResolution(UserPrincipal actor, Long postingId, EligibilityRunReason reason) {
         try {
-            var run = resolutionService.createRun(postingId, EligibilityRunReason.PUBLISH, actor.userId());
+            var run = resolutionService.createRun(postingId, reason, actor.userId());
             runLauncher.launch(run.getId(), postingId, actor.userId());
-            log.info("Eligibility resolution queued on publish: postingId={} runId={} actorId={}",
-                    postingId, run.getId(), actor.userId());
+            log.info("Eligibility resolution queued ({}): postingId={} runId={} actorId={}",
+                    reason, postingId, run.getId(), actor.userId());
         } catch (Exception e) {
-            log.error("Posting {} published but eligibility resolution could not be queued: {}. "
+            log.error("Posting {} saved but eligibility resolution could not be queued: {}. "
                             + "Use the re-evaluate endpoint to retry.",
                     postingId, e.getMessage(), e);
         }
-    }
-
-    /** Manual early close. The scheduled sweep does the same thing at the deadline. */
-    @Transactional
-    public JobPostingResponse close(UserPrincipal actor, Long id, String reason) {
-        try {
-            return doClose(actor, id, reason);
-        } catch (ApiException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Failed to close posting id={} actorId={}: {}", id, actor.userId(), e.getMessage(), e);
-            throw new AdminExceptions.InvalidRequestException(
-                    "Could not close the drive. Please try again.");
-        }
-    }
-
-    private JobPostingResponse doClose(UserPrincipal actor, Long id, String reason) {
-        JobPosting posting = postingRepository.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> new AdminExceptions.NotFoundException("JobPosting", id));
-        assertActorCoversTargets(actor, id);
-
-        if (!PostingStatusTransitions.canTransition(posting.getStatus(), PostingStatus.APPLICATIONS_CLOSED)) {
-            throw new AdminExceptions.IllegalStatusTransitionException(
-                    "JobPosting", posting.getStatus().name(), PostingStatus.APPLICATIONS_CLOSED.name());
-        }
-        posting.setStatus(PostingStatus.APPLICATIONS_CLOSED);
-        posting.setApplicationsClosedAt(Instant.now());
-        posting.setClosureReason(reason);
-        posting.setUpdatedBy(actor.userId());
-
-        log.info("Closed posting id={} early, reason={} actorId={}", id, reason, actor.userId());
-        return toResponse(postingRepository.save(posting));
     }
 
     @Transactional
@@ -400,9 +449,13 @@ public class JobPostingService {
     }
 
     private JobPostingResponse doCancel(UserPrincipal actor, Long id, String reason) {
-        JobPosting posting = postingRepository.findByIdAndIsDeletedFalse(id)
+        // findForSealing, not findByIdAndIsDeletedFalse: cancelling now bulk-updates
+        // the application rows, so it must take the same exclusive lock the deadline
+        // sweep takes. Otherwise an apply committing mid-cancel lands at APPLIED on
+        // an already-cancelled drive and is stranded all over again.
+        JobPosting posting = postingRepository.findForSealing(id)
                 .orElseThrow(() -> new AdminExceptions.NotFoundException("JobPosting", id));
-        assertActorCoversTargets(actor, id);
+        assertActorMayCancel(actor, id);
 
         if (!PostingStatusTransitions.canTransition(posting.getStatus(), PostingStatus.CANCELLED)) {
             throw new AdminExceptions.IllegalStatusTransitionException(
@@ -412,20 +465,73 @@ public class JobPostingService {
             throw new AdminExceptions.InvalidRequestException(
                     "A reason is required when cancelling a drive -- students and the company have already been told about it.");
         }
+
+        Instant now = Instant.now();
         posting.setStatus(PostingStatus.CANCELLED);
-        posting.setCancelledAt(Instant.now());
+        posting.setCancelledAt(now);
         posting.setClosureReason(reason);
         posting.setUpdatedBy(actor.userId());
+        postingRepository.save(posting);
 
-        log.warn("Cancelled posting id={} reason={} actorId={}", id, reason, actor.userId());
-        return toResponse(postingRepository.save(posting));
+        // Retire the applications with the drive. PostingStatus.CANCELLED is
+        // terminal, so anything left at APPLIED / IN_REVIEW / SHORTLISTED here
+        // could never be transitioned again by anything -- it would sit in the
+        // student's "My Applications" as in-progress forever, against a drive that
+        // no longer exists.
+        //
+        // History FIRST: recordBulkHistory reads from_status off the live row, so
+        // it has to run before the UPDATE overwrites it.
+        var cancellable = ApplicationStatusTransitions.cancellableStatuses();
+        List<String> cancellableNames = cancellable.stream().map(Enum::name).toList();
+
+        int audited = applicationRepository.recordBulkHistory(
+                id, cancellableNames, ApplicationStatus.DRIVE_CANCELLED.name(),
+                now, actor.userId(), ActorKind.TNP.name(),
+                truncateReason("Drive cancelled: " + reason));
+
+        int retired = applicationRepository.cancelPool(
+                id, cancellable, ApplicationStatus.DRIVE_CANCELLED, actor.userId());
+
+        if (audited != retired) {
+            // Cannot happen inside one transaction holding the posting's write
+            // lock, but if it ever does it means some rows changed status between
+            // the two statements and the audit trail is incomplete -- which is
+            // worth failing the cancel over rather than discovering in a dispute.
+            throw new IllegalStateException(
+                    "Audit/retire mismatch cancelling posting " + id
+                            + ": audited=" + audited + " retired=" + retired);
+        }
+
+        // Everything else the drive had in flight: a running eligibility
+        // resolution, an open scoring gate, notifications queued but not yet sent.
+        // Must come after the applications are retired and before any new outbox
+        // row is written, so it can never sweep up a message about the cancel itself.
+        PostingCancellationCascade.Result stopped = cancellationCascade.stop(id, now, actor.userId());
+
+        // TODO(notification): the applicants are now DRIVE_CANCELLED and nothing
+        // tells them. Needs a driveCancelled() builder in Dispatches, a seeded
+        // template, and a queueDriveCancelled() here -- all inside this
+        // transaction, like every other dispatch in this service.
+
+        log.warn("Cancelled posting id={} reason={} applicationsRetired={} runsStopped={} gatesCancelled={} "
+                        + "queuedNotificationsDropped={} actorId={}",
+                id, reason, retired, stopped.runsStopped(), stopped.gatesCancelled(),
+                stopped.notificationsDropped(), actor.userId());
+        // The bulk UPDATEs above clear the persistence context, so `posting` is detached
+        // by now. Re-read it rather than answering from a stale instance.
+        return toResponse(postingRepository.findByIdWithCompany(id)
+                .orElseThrow(() -> new AdminExceptions.NotFoundException("JobPosting", id)));
+    }
+
+    /** application_status_history.reason is varchar(255). */
+    private static String truncateReason(String reason) {
+        return reason.length() <= 255 ? reason : reason.substring(0, 252) + "...";
     }
 
     /**
-     * Attach a document that is already in object storage. Publishing refuses a
-     * posting with no JD attached, so this is a required step rather than a
-     * convenience -- a drive students can apply to without being able to read
-     * what they are applying for is not a drive.
+     * Attach a document that is already in object storage. Optional since
+     * 2026-10-20: the JD is parsed into the drive's own fields, which students
+     * read on the drive page, so publishing no longer requires a file.
      */
     /**
      * Uploads a job-description file and attaches it to the posting in one call.
@@ -605,7 +711,8 @@ public class JobPostingService {
             targetsByPosting.computeIfAbsent(tg.getPosting().getId(), k -> new ArrayList<>())
                     .add(new JobPostingResponse.TargetResponse(
                             tg.getId(), tg.getCollegeId(), tg.getDepartmentId(),
-                            tg.getBatchYear(), tg.getDegree()));
+                            tg.getBatchYear(), tg.getDegreeId(),
+                            tg.getDegree() == null ? null : tg.getDegree().getName()));
         }
 
         return page.map(p -> toResponse(
@@ -625,20 +732,59 @@ public class JobPostingService {
      * over the raw columns would not: Postgres treats NULL as distinct from
      * NULL, so two identical "all departments" rows would both be accepted.
      */
-    static String targetKey(Long collegeId, Long departmentId, Integer batchYear, String degree) {
+    static String targetKey(Long collegeId, Long departmentId, Integer batchYear, Long degreeId) {
         return "c:" + collegeId
                 + "|d:" + (departmentId == null ? "*" : departmentId)
                 + "|b:" + batchYear
-                + "|g:" + (degree == null || degree.isBlank() ? "*" : degree.trim());
+                + "|g:" + (degreeId == null ? "*" : degreeId);
+    }
+
+    /**
+     * A target's degree must be real, offered by the target college, and -- when a
+     * department is also named -- the degree that department belongs to. Otherwise
+     * the drive would silently target nobody ("B.Tech students of an MCA
+     * department") and no one would find out until the pool came back empty.
+     */
+    private Degree resolveTargetDegree(College college, Department department, Long degreeId) {
+        if (degreeId == null) {
+            return null;
+        }
+        Degree degree = degreeRepository.findByIdAndIsDeletedFalse(degreeId)
+                .orElseThrow(() -> new AdminExceptions.NotFoundException("Degree", degreeId));
+        if (college.getDegrees().stream().noneMatch(d -> d.getId().equals(degreeId))) {
+            throw new AdminExceptions.InvalidRequestException(
+                    college.getName() + " does not offer " + degree.getName() + ".");
+        }
+        if (department != null && !department.getDegree().getId().equals(degreeId)) {
+            throw new AdminExceptions.InvalidRequestException(
+                    "Department " + department.getName() + " belongs to " + department.getDegree().getName()
+                            + ", not " + degree.getName() + ".");
+        }
+        return degree;
     }
 
     private JobPosting requireEditable(Long id) {
         JobPosting posting = postingRepository.findByIdAndIsDeletedFalse(id)
                 .orElseThrow(() -> new AdminExceptions.NotFoundException("JobPosting", id));
-        if (!PostingStatusTransitions.isEditable(posting.getStatus())) {
+        if (!PostingEditing.isEditable(posting.getStatus())) {
             throw new AdminExceptions.PostingNotEditableException(posting.getStatus().name());
         }
         return posting;
+    }
+
+    /**
+     * A drive can be cancelled at ANY stage, so a draft that has no targets yet
+     * must be cancellable too. With no targets there are no colleges to check
+     * scope against, and anyone allowed to author a drive may discard it.
+     */
+    private void assertActorMayCancel(UserPrincipal actor, Long postingId) {
+        if (targetRepository.countByPosting_IdAndIsDeletedFalse(postingId) == 0) {
+            if (!policy.canDraftPosting(actor)) {
+                throw new AdminExceptions.InsufficientAuthorityException();
+            }
+            return;
+        }
+        assertActorCoversTargets(actor, postingId);
     }
 
     private void assertActorCoversTargets(UserPrincipal actor, Long postingId) {
@@ -673,12 +819,24 @@ public class JobPostingService {
         p.setApplicationDeadline(req.applicationDeadline());
         p.setDriveDate(req.driveDate());
         p.setDriveVenue(req.driveVenue());
-        p.setShortlistingMode(req.shortlistingMode() == null
-                ? ShortlistingMode.COMPOSITE_SCORE : req.shortlistingMode());
+        ShortlistingMode mode = req.shortlistingMode() == null
+                ? ShortlistingMode.COMPOSITE_SCORE : req.shortlistingMode();
+        p.setShortlistingMode(mode);
         if (req.marksStudentPlaced() != null) {
             p.setMarksStudentPlaced(req.marksStudentPlaced());
         }
         p.setMaxApplications(req.maxApplications());
+
+        // An FCFS drive with no seat count is a cap of nothing -- it would silently
+        // accept unlimited applicants on a drive whose whole point is that seats
+        // are finite, and nobody would find out until the room was overfull.
+        if (mode.capsApplicationsAtApplyTime() && req.maxApplications() == null) {
+            throw new AdminExceptions.InvalidRequestException(
+                    "A first-come-first-served drive needs a seat count: set maxApplications. "
+                            + "Under any other shortlisting mode the seat count is an optional "
+                            + "post-deadline target instead.");
+        }
+
         if (req.notifyOnPublish() != null) {
             p.setNotifyOnPublish(req.notifyOnPublish());
         }
@@ -722,6 +880,28 @@ public class JobPostingService {
     }
 
     /** Single-posting path: three extra queries, which is fine for one row. */
+    /**
+     * The company's name without assuming the posting is still attached to a session.
+     *
+     * posting.getCompany() is a lazy proxy. Inside the session that loaded it,
+     * getName() initialises it; on a detached posting it throws
+     * LazyInitializationException, and a cancel did exactly that: its bulk UPDATEs
+     * clear the persistence context, then building the response touched the proxy
+     * and the whole cancel rolled back. If the proxy cannot be read, ask for the name
+     * by id instead -- a one-row lookup in a fresh session.
+     */
+    private String companyNameOf(JobPosting p) {
+        Company company = p.getCompany();
+        if (org.hibernate.Hibernate.isInitialized(company)) {
+            return company.getName();
+        }
+        try {
+            return company.getName();
+        } catch (org.hibernate.LazyInitializationException e) {
+            return companyRepository.findById(company.getId()).map(Company::getName).orElse(null);
+        }
+    }
+
     private JobPostingResponse toResponse(JobPosting p) {
         List<JobPostingResponse.SkillResponse> skills =
                 skillRepository.findByPosting_IdAndIsDeletedFalse(p.getId()).stream()
@@ -735,7 +915,8 @@ public class JobPostingService {
         List<JobPostingResponse.TargetResponse> targets =
                 targetRepository.findByPosting_IdAndIsDeletedFalse(p.getId()).stream()
                         .map(t -> new JobPostingResponse.TargetResponse(
-                                t.getId(), t.getCollegeId(), t.getDepartmentId(), t.getBatchYear(), t.getDegree()))
+                                t.getId(), t.getCollegeId(), t.getDepartmentId(), t.getBatchYear(),
+                                t.getDegreeId(), t.getDegree() == null ? null : t.getDegree().getName()))
                         .toList();
         return toResponse(p, skills, locations, targets);
     }
@@ -746,7 +927,7 @@ public class JobPostingService {
                                           List<JobPostingResponse.LocationResponse> locations,
                                           List<JobPostingResponse.TargetResponse> targets) {
         return new JobPostingResponse(
-                p.getId(), p.getCompany().getId(), p.getCompany().getName(),
+                p.getId(), p.getCompany().getId(), companyNameOf(p),
                 p.getPostingCode(), p.getTitle(), p.getJobType(), p.getWorkMode(),
                 p.getDescription(), p.getResponsibilities(),
                 p.getCtcMin(), p.getCtcMax(), p.getCtcCurrency(), p.getPackageBasis(),
@@ -757,9 +938,10 @@ public class JobPostingService {
                 p.getPublishedAt(), p.getPublishedBy(),
                 p.getDriveDate(), p.getDriveVenue(),
                 p.getShortlistingMode(), p.isMarksStudentPlaced(),
-                p.getMaxApplications(), p.isNotifyOnPublish(),
+                p.getMaxApplications(), p.getShortlistingMode().notice(), p.isNotifyOnPublish(),
                 skills, locations, targets,
-                PostingStatusTransitions.isEditable(p.getStatus()),
-                p.getCreatedAt(), p.getUpdatedAt());
+                PostingEditing.isEditable(p.getStatus()),
+                p.getCreatedAt(), p.getUpdatedAt(),
+                p.getReopenedAt(), p.getReopenCount(), p.getShortlistPublishedAt());
     }
 }

@@ -5,12 +5,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.yuktisetu.adminservice.dto.BulkStudentCreateResponse;
 import org.yuktisetu.adminservice.dto.BulkStudentRequest;
 import org.yuktisetu.adminservice.dto.StudentRequest;
 import org.yuktisetu.adminservice.exception.AdminExceptions;
 import org.yuktisetu.core.security.UserPrincipal;
 import org.yuktisetu.institute.db.College;
+import org.yuktisetu.institute.db.Degree;
+import org.yuktisetu.institute.repository.DegreeRepository;
 import org.yuktisetu.institute.db.Department;
 import org.yuktisetu.profile.db.StudentProfile;
 import org.yuktisetu.identity.db.User;
@@ -42,6 +46,7 @@ public class BulkStudentService {
     private final PasswordEncoder passwordEncoder;
     private final CollegeRepository collegeRepository;
     private final DepartmentRepository departmentRepository;
+    private final DegreeRepository degreeRepository;
     private final UserRoleAssignmentRepository userRoleAssignmentRepository;
 
     @Transactional
@@ -85,13 +90,28 @@ public class BulkStudentService {
             Map<String, College> collegesByCode = collegeCodes.isEmpty() ? Map.of()
                     : collegeRepository.findByCodeInAndIsDeletedFalse(collegeCodes).stream()
                         .collect(Collectors.toMap(College::getCode, c -> c, (a, b) -> a));
-            Map<String, Department> departmentsByCode = departmentCodes.isEmpty() ? Map.of()
+            // Department codes are unique per COLLEGE, not globally, so the map is
+            // keyed by college + code. Keyed by code alone, two colleges that both
+            // have a "COMP" would collapse to whichever came back first, and students
+            // of one college would be filed under the other's department.
+            Map<String, Department> departmentsByCollegeAndCode = departmentCodes.isEmpty() ? Map.of()
                     : departmentRepository.findByCodeInAndIsDeletedFalse(departmentCodes).stream()
-                        .collect(Collectors.toMap(Department::getCode, d -> d, (a, b) -> a));
+                        .collect(Collectors.toMap(d -> d.getCollege().getId() + ":" + d.getCode(), d -> d, (a, b) -> a));
+
+            // The degree catalogue, once. A spreadsheet may write "B.Tech", "btech" or
+            // "B Tech"; all of them normalise to the same key as the catalogue entry.
+            List<Degree> catalogue = degreeRepository.findByIsDeletedFalseOrderByNameAsc();
+            Map<String, Degree> degreesByKey = new java.util.HashMap<>();
+            for (Degree d : catalogue) {
+                degreesByKey.put(degreeKey(d.getName()), d);
+                degreesByKey.put(degreeKey(d.getCode()), d);
+            }
+            String validDegrees = catalogue.stream().map(Degree::getName).collect(Collectors.joining(", "));
 
             // Parallel to successfulRequests: the scope resolved for each surviving row.
             List<College> resolvedColleges = new ArrayList<>();
             List<Department> resolvedDepartments = new ArrayList<>();
+            List<Degree> resolvedDegrees = new ArrayList<>();
 
             for (int i = 0; i < studentRequests.size(); i++) {
                 StudentRequest studentRequest = studentRequests.get(i);
@@ -109,11 +129,33 @@ public class BulkStudentService {
                                 "Student at position %d: unknown college code '%s'",
                                 i + 1, studentRequest.getCollegeCode()));
                     }
-                    Department rowDepartment = departmentsByCode.get(studentRequest.getDepartmentCode().trim());
+                    Department rowDepartment = departmentsByCollegeAndCode.get(
+                            rowCollege.getId() + ":" + studentRequest.getDepartmentCode().trim());
                     if (rowDepartment == null) {
                         throw new AdminExceptions.InvalidRequestException(String.format(
-                                "Student at position %d: unknown department code '%s'",
-                                i + 1, studentRequest.getDepartmentCode()));
+                                "Student at position %d: department code '%s' does not exist in college %s",
+                                i + 1, studentRequest.getDepartmentCode(), rowCollege.getCode()));
+                    }
+
+                    // Degree, department and college must agree: the degree has to be a
+                    // real one, offered by the college, and the one the department
+                    // belongs to. A student filed under an MCA department with degree
+                    // B.Tech would never match either drive target.
+                    Degree rowDegree = degreesByKey.get(degreeKey(studentRequest.getDegree()));
+                    if (rowDegree == null) {
+                        throw new AdminExceptions.InvalidRequestException(String.format(
+                                "Student at position %d: unknown degree '%s' (valid degrees: %s)",
+                                i + 1, studentRequest.getDegree(), validDegrees));
+                    }
+                    if (rowCollege.getDegrees().stream().noneMatch(d -> d.getId().equals(rowDegree.getId()))) {
+                        throw new AdminExceptions.InvalidRequestException(String.format(
+                                "Student at position %d: college %s does not offer degree %s",
+                                i + 1, rowCollege.getCode(), rowDegree.getName()));
+                    }
+                    if (!rowDepartment.getDegree().getId().equals(rowDegree.getId())) {
+                        throw new AdminExceptions.InvalidRequestException(String.format(
+                                "Student at position %d: department %s belongs to degree %s, not %s",
+                                i + 1, rowDepartment.getCode(), rowDepartment.getDegree().getName(), rowDegree.getName()));
                     }
 
                     // Generate password: lastname.first 5 prn digits
@@ -164,6 +206,7 @@ public class BulkStudentService {
                     successfulRequests.add(studentRequest);
                     resolvedColleges.add(rowCollege);
                     resolvedDepartments.add(rowDepartment);
+                    resolvedDegrees.add(rowDegree);
 
                     // Prepare success response
                     BulkStudentCreateResponse.BulkStudentSuccessDto successDto = BulkStudentCreateResponse.BulkStudentSuccessDto.builder()
@@ -220,7 +263,7 @@ public class BulkStudentService {
                     assignment.setActive(true);
                     assignment.setCollege(resolvedColleges.get(i));
                     assignment.setDepartment(resolvedDepartments.get(i));
-                    assignment.setDegree(successfulRequests.get(i).getDegree());
+                    assignment.setDegree(resolvedDegrees.get(i));
                     userRoleAssignments.add(assignment);
 
                 }
@@ -244,13 +287,31 @@ public class BulkStudentService {
 
             List<Long> userIds = savedUsers.stream().map(User::getId).toList();
             log.info("Count User IDs of successfully saved students: {}", userIds.size());
-            // Trigger asynchronous invite processing (after DB transaction commits)
-            triggerNotificationService.processStudentInvitesAsync(userIds, successfulStudents);
+            // Must run AFTER the commit, not merely "later". The @Async thread starts
+            // within milliseconds, while this transaction is still open, and its
+            // findAllById cannot see rows that are not committed yet -- it found an
+            // empty list, logged "No successful students to send invites to", and
+            // not one email went out (observed 2026-10-18, 14 ms gap in the log).
+            runAfterCommit(() -> triggerNotificationService.processStudentInvitesAsync(userIds));
 
             return response;
         } catch (Exception e) {
             log.error("Unexpected error during bulk student processing: {}", e.getMessage(), e);
             throw new RuntimeException(e);
+        }
+    }
+
+    /** Runs the task once this transaction has committed; immediately if there is none. */
+    private void runAfterCommit(Runnable task) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    task.run();
+                }
+            });
+        } else {
+            task.run();
         }
     }
 
@@ -284,6 +345,19 @@ public class BulkStudentService {
                     String.format("Student at position %d: departmentCode is required", index + 1));
         }
         
+        // Degree (B.Tech, MCA, ...) and graduation year are mandatory: drives
+        // target by them, and a student without either silently matches nothing.
+        // Degree is the programme; the stream is the department, validated above.
+        if (studentRequest.getDegree() == null || studentRequest.getDegree().isBlank()) {
+            throw new AdminExceptions.InvalidRequestException(
+                    String.format("Student at position %d: degree is required (e.g. B.Tech, MCA)", index + 1));
+        }
+        if (studentRequest.getGraduationYear() == null
+                || studentRequest.getGraduationYear() < 2000 || studentRequest.getGraduationYear() > 2100) {
+            throw new AdminExceptions.InvalidRequestException(
+                    String.format("Student at position %d: graduationYear must be a single 4-digit year such as 2027", index + 1));
+        }
+
         // Additional validation for email format (basic)
         String email = studentRequest.getEmail().toLowerCase().trim();
         if (!email.matches("^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$")) {
@@ -308,6 +382,11 @@ public class BulkStudentService {
         return String.format("%s.%s", lastName.toLowerCase(), prnPart);
     }
 
+    /** "B.Tech", "btech" and "B Tech" are the same degree. */
+    private static String degreeKey(String raw) {
+        return raw == null ? "" : raw.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "");
+    }
+
     private String extractFailedField(String errorMessage) {
         if (errorMessage == null) return "unknown";
         if (errorMessage.contains("firstName")) return "firstName";
@@ -315,6 +394,11 @@ public class BulkStudentService {
         if (errorMessage.contains("email")) return "email";
         if (errorMessage.contains("phone")) return "phone";
         if (errorMessage.contains("prn")) return "prn";
+        if (errorMessage.contains("degree") || errorMessage.contains("Degree")) return "degree";
+        if (errorMessage.contains("graduationYear")) return "graduationYear";
+        if (errorMessage.contains("collegeCode")) return "collegeCode";
+        if (errorMessage.contains("departmentCode") || errorMessage.contains("department code")) return "departmentCode";
+        if (errorMessage.contains("college code")) return "collegeCode";
         return "validation";
     }
 }

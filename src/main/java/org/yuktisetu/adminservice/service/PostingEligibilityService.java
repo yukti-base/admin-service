@@ -280,7 +280,7 @@ public class PostingEligibilityService {
     private JobPosting requireEditablePosting(Long postingId) {
         JobPosting posting = postingRepository.findByIdAndIsDeletedFalse(postingId)
                 .orElseThrow(() -> new AdminExceptions.NotFoundException("JobPosting", postingId));
-        if (!PostingStatusTransitions.isEditable(posting.getStatus())) {
+        if (!PostingEditing.isEditable(posting.getStatus())) {
             throw new AdminExceptions.PostingNotEditableException(posting.getStatus().name());
         }
         return posting;

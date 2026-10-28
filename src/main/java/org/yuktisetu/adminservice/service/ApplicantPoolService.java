@@ -32,6 +32,7 @@ import org.yuktisetu.drive.repository.EligibilityRunRepository;
 import org.yuktisetu.drive.repository.JobApplicationRepository;
 import org.yuktisetu.drive.repository.JobPostingRepository;
 import org.yuktisetu.drive.repository.PostingTargetRepository;
+import org.yuktisetu.identity.model.NotifyTarget;
 import org.yuktisetu.identity.repository.UserRepository;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -69,6 +70,7 @@ public class ApplicantPoolService {
     private final PlacementDrivePolicy policy;
     private final EligibilityResolutionService resolutionService;
     private final EligibilityRunLauncher runLauncher;
+    private final DriveNotificationService driveNotificationService;
     private final ObjectMapper objectMapper;
 
     /**
@@ -305,7 +307,20 @@ public class ApplicantPoolService {
 
             log.info("Applicant disqualified: applicationId={} postingId={} actorId={} reason={}",
                     applicationId, postingId, actor.userId(), reason);
-            return toApplicant(application, application.getStudent());
+
+            // The student is owed this one, and owed the reason with it. Built
+            // from the User already loaded for the response rather than a second
+            // lookup, and queued in this transaction so the notice cannot outlive
+            // a disqualification that rolled back.
+            User student = application.getStudent();
+            driveNotificationService.queueDisqualification(
+                    postingId,
+                    new NotifyTarget(student.getId(), student.getEmail(),
+                            student.getFirstName(), student.getLastName()),
+                    reason,
+                    actor.userId());
+
+            return toApplicant(application, student);
 
         } catch (ApiException e) {
             throw e;

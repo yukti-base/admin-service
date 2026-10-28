@@ -54,6 +54,7 @@ public record JobPostingRequest(
         ShortlistingMode shortlistingMode,
         Boolean marksStudentPlaced,
         @Positive Integer maxApplications,
+
         Boolean notifyOnPublish,
 
         @Valid List<SkillRequest> skills,

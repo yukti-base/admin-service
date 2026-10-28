@@ -1,5 +1,6 @@
 package org.yuktisetu.adminservice.service;
 
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
@@ -25,6 +26,7 @@ import org.yuktisetu.drive.model.EligibilityEvaluator;
 import org.yuktisetu.drive.model.EligibilityOutcome;
 import org.yuktisetu.drive.model.EligibilityRunReason;
 import org.yuktisetu.drive.model.EligibilityRunStatus;
+import org.yuktisetu.drive.model.PostingStatus;
 import org.yuktisetu.drive.model.ReapplicationRules;
 import org.yuktisetu.drive.repository.DrivePlacedStudentDecisionRepository;
 import org.yuktisetu.drive.repository.EligibilityCandidateRepository;
@@ -90,7 +92,10 @@ public class EligibilityResolutionService {
     private final PlacementOfferRepository offerRepository;
     private final DrivePlacedStudentDecisionRepository decisionRepository;
     private final UserRepository userRepository;
+    private final DriveNotificationService driveNotificationService;
     private final ObjectMapper objectMapper;
+    private final EntityManager entityManager;
+    private final ApplicationRequalificationService requalificationService;
 
     /**
      * Creates the run row and commits it, so the async worker and the caller both
@@ -152,13 +157,31 @@ public class EligibilityResolutionService {
                 .findByPosting_IdAndIsDeletedFalse(postingId)
                 .orElseThrow(() -> new AdminExceptions.NotFoundException("PostingReapplicationPolicy", postingId));
 
+        // A cancelled drive has nothing to resolve. The cancel marks RUNNING runs
+        // FAILED itself; this covers a run that was queued but had not started.
+        if (posting.getStatus() == PostingStatus.CANCELLED) {
+            abandon(run);
+            return;
+        }
+
         // Built once, reused for every candidate.
         CriteriaSnapshot snapshot = snapshotFor(postingId, criteriaEntity);
 
         // --- Query 1: targeting. One call, whatever the cohort size. ---
         List<Object[]> targeted = candidateRepository.findTargetedStudents(postingId);
         if (targeted.isEmpty()) {
+            // The previous eligible set must go too: after a re-publish whose new
+            // targets match nobody, leaving it would keep students who no longer
+            // qualify able to see and apply to the drive.
+            eligibleStudentRepository.deleteAllForPosting(postingId);
             finish(run, 0, 0, 0, Map.of());
+            if (run.getRunReason() == EligibilityRunReason.CRITERIA_CHANGED) {
+                requalificationService.disqualifyNoLongerEligible(postingId, actorUserId);
+            }
+            // Still worth telling the staff. A drive whose targets match nobody
+            // looks identical to one nobody has resolved yet, and the difference
+            // matters on the afternoon of a deadline.
+            driveNotificationService.queueEligibilityRunComplete(postingId, 0, 0);
             return;
         }
 
@@ -263,6 +286,50 @@ public class EligibilityResolutionService {
         }
 
         finish(run, studentIds.size(), eligibleCount, ineligibleCount, failureSummary);
+
+        // A drive cancelled while this ran must not announce itself to students.
+        // Fresh read of the committed status: the loaded entity predates the cancel.
+        PostingStatus currentStatus = entityManager.createQuery(
+                        "select p.status from JobPosting p where p.id = :id", PostingStatus.class)
+                .setParameter("id", postingId)
+                .getSingleResult();
+        if (currentStatus == PostingStatus.CANCELLED) {
+            log.warn("Posting {} was cancelled during eligibility run {}; skipping notifications", postingId, runId);
+            return;
+        }
+
+        // A re-publish of a live drive: whoever applied but no longer qualifies is
+        // disqualified (and told why) before anyone is told the drive changed.
+        boolean republish = run.getRunReason() == EligibilityRunReason.CRITERIA_CHANGED;
+        if (republish) {
+            requalificationService.disqualifyNoLongerEligible(postingId, actorUserId);
+        }
+
+        // Notifications last, and inside this same transaction (that is the point of
+        // the outbox: students become eligible AND their notification is queued, or
+        // neither happened).
+        //
+        // They are handed the posting's ID, never the entity. This method issues
+        // several @Modifying(clearAutomatically = true) statements (deleting the old
+        // eligible set, marking students notified) which detach every managed entity,
+        // `posting` included; reading posting.getCompany().getName() afterwards threw
+        // LazyInitializationException and the swallow-everything notification code
+        // reported success while no student was ever told. The notification service
+        // re-reads what it needs by id, so none of that ordering matters any more.
+        driveNotificationService.queueEligibilityRunComplete(postingId, studentIds.size(), eligibleCount);
+        if (republish) {
+            driveNotificationService.queueDriveUpdatedBlast(postingId);
+        } else {
+            driveNotificationService.queueDrivePublishedBlast(postingId);
+        }
+    }
+
+    /** Ends a run that has nothing left to do, without pretending it resolved anything. */
+    private void abandon(EligibilityRun run) {
+        run.setStatus(EligibilityRunStatus.FAILED);
+        run.setFinishedAt(Instant.now());
+        run.setError("Stopped: the drive was cancelled");
+        runRepository.save(run);
     }
 
     /**
@@ -346,6 +413,12 @@ public class EligibilityResolutionService {
                 run.setFinishedAt(Instant.now());
                 run.setError(cause.getClass().getSimpleName() + ": " + cause.getMessage());
                 runRepository.save(run);
+
+                // The alert rides this transaction, not the failed one. The run's
+                // own transaction has already rolled back by the time we get here,
+                // so an outbox row written there would have vanished with it.
+                driveNotificationService.queueEligibilityRunFailed(
+                        run.getPosting().getId(), cause.getClass().getSimpleName() + ": " + cause.getMessage());
             });
         } catch (Exception e) {
             log.error("Could not even mark eligibility run {} as FAILED: {}", runId, e.getMessage(), e);

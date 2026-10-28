@@ -18,6 +18,8 @@ import org.yuktisetu.identity.model.UserStatus;
 import org.yuktisetu.identity.repository.UserRepository;
 import org.yuktisetu.identity.repository.UserRoleAssignmentRepository;
 import org.yuktisetu.institute.db.College;
+import org.yuktisetu.institute.db.Degree;
+import org.yuktisetu.institute.repository.DegreeRepository;
 import org.yuktisetu.institute.db.Department;
 import org.yuktisetu.institute.db.Trust;
 import org.yuktisetu.institute.model.TenantStatus;
@@ -63,6 +65,7 @@ class BulkStudentImportIntegrationTest {
     @Autowired TrustRepository trustRepository;
     @Autowired CollegeRepository collegeRepository;
     @Autowired DepartmentRepository departmentRepository;
+    @Autowired DegreeRepository degreeRepository;
 
     private static final AtomicLong SEQ = new AtomicLong(800000);
 
@@ -86,11 +89,13 @@ class BulkStudentImportIntegrationTest {
         college.setPrimaryContactName("TnP Officer");
         college.setPrimaryContactEmail("tnp@example.test");
         college.setStatus(TenantStatus.ACTIVE);
+        college.getDegrees().add(degree("BTECH", "B.Tech"));
         college = collegeRepository.save(college);
 
         department = new Department();
         department.setCollege(college);
         department.setName("Computer Engineering");
+        department.setDegree(degree("BTECH", "B.Tech"));
         department.setCode("D-" + UUID.randomUUID().toString().substring(0, 6));
         department.setStatus(TenantStatus.ACTIVE);
         department = departmentRepository.save(department);
@@ -104,6 +109,23 @@ class BulkStudentImportIntegrationTest {
                 .createdAt(now).updatedAt(now).isDeleted(false).build());
         actor = new UserPrincipal(admin.getId(), admin.getEmail(),
                 List.of(new UserPrincipal.RoleClaim("TNP_SUPER_ADMIN", null, null)));
+    }
+
+    private Degree degree(String code, String name) {
+        return degreeRepository.findByIsDeletedFalseOrderByNameAsc().stream()
+                .filter(d -> d.getCode().equals(code)).findFirst()
+                .orElseGet(() -> {
+                    Degree d = new Degree();
+                    d.setCode(code);
+                    d.setName(name);
+                    d.setStatus(TenantStatus.ACTIVE);
+                    return degreeRepository.save(d);
+                });
+    }
+
+    /** The assignment's degree is a lazy reference and these tests hold no session open. */
+    private String degreeName(UserRoleAssignment a) {
+        return degreeRepository.findById(a.getDegree().getId()).orElseThrow().getName();
     }
 
     private StudentRequest aStudent() {
@@ -193,7 +215,7 @@ class BulkStudentImportIntegrationTest {
         assertEquals(college.getId(), ra.getCollegeId(),
                 "scope is resolved from collegeCode, and is a bare id since Phase 2");
         assertEquals(department.getId(), ra.getDeptId());
-        assertEquals("B.Tech", ra.getDegree(), "degree lives on the assignment, not the profile");
+        assertEquals("B.Tech", degreeName(ra), "degree lives on the assignment, not the profile");
     }
 
     @Test
@@ -248,6 +270,7 @@ class BulkStudentImportIntegrationTest {
         Department other = new Department();
         other.setCollege(college);
         other.setName("Mechanical Engineering");
+        other.setDegree(degree("BTECH", "B.Tech"));
         other.setCode("D-" + UUID.randomUUID().toString().substring(0, 6));
         other.setStatus(TenantStatus.ACTIVE);
         other = departmentRepository.save(other);
@@ -310,5 +333,60 @@ class BulkStudentImportIntegrationTest {
 
         User still = userRepository.findByEmailIgnoreCaseAndIsDeletedFalse(first.getEmail()).orElseThrow();
         assertEquals(originalId, still.getId(), "the original user must survive a failed re-import");
+    }
+
+    @Test
+    @DisplayName("a student without a degree or a valid graduation year is rejected, and the rest of the batch still imports")
+    void degreeAndGraduationYearAreMandatory() {
+        StudentRequest noDegree = aStudent();
+        noDegree.setDegree("  ");
+        StudentRequest noYear = aStudent();
+        noYear.setGraduationYear(null);
+        StudentRequest badYear = aStudent();
+        badYear.setGraduationYear(27);
+        StudentRequest ok = aStudent();
+
+        BulkStudentCreateResponse res = importOf(noDegree, noYear, badYear, ok);
+
+        assertEquals(1, res.getSuccessfulStudents().size());
+        assertEquals(3, res.getFailedStudents().size());
+        assertEquals(List.of("degree", "graduationYear", "graduationYear"),
+                res.getFailedStudents().stream().map(BulkStudentCreateResponse.BulkStudentFailureDto::getFailedField).toList());
+        assertTrue(userRepository.findByEmailIgnoreCaseAndIsDeletedFalse(noDegree.getEmail()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("degree, college and department must agree, and the degree may be written any way the catalogue is spelled")
+    void degreeMustMatchCollegeAndDepartment() {
+        Degree mca = degree("MCA", "MCA");
+
+        StudentRequest spelledLoosely = aStudent();
+        spelledLoosely.setDegree("b tech");               // = B.Tech
+        StudentRequest unknown = aStudent();
+        unknown.setDegree("Astrology");
+        StudentRequest notOffered = aStudent();
+        notOffered.setDegree("MCA");                       // real degree, but PCCOE-test doesn't offer it
+        StudentRequest wrongDepartment = aStudent();       // college offers MCA after the next line, department is B.Tech
+        wrongDepartment.setDegree("MCA");
+
+        BulkStudentCreateResponse res = importOf(spelledLoosely, unknown, notOffered);
+        assertEquals(1, res.getSuccessfulStudents().size());
+        assertEquals(2, res.getFailedStudents().size());
+        assertTrue(res.getFailedStudents().get(0).getErrorMessage().contains("unknown degree"),
+                res.getFailedStudents().get(0).getErrorMessage());
+        assertTrue(res.getFailedStudents().get(1).getErrorMessage().contains("does not offer degree"),
+                res.getFailedStudents().get(1).getErrorMessage());
+
+        // Once the college offers MCA the only remaining objection is the department's own degree.
+        college.getDegrees().add(mca);
+        collegeRepository.save(college);
+        BulkStudentCreateResponse res2 = importOf(wrongDepartment);
+        assertEquals(1, res2.getFailedStudents().size());
+        assertTrue(res2.getFailedStudents().get(0).getErrorMessage().contains("belongs to degree B.Tech, not MCA"),
+                res2.getFailedStudents().get(0).getErrorMessage());
+
+        User saved = userRepository.findByEmailIgnoreCaseAndIsDeletedFalse(spelledLoosely.getEmail()).orElseThrow();
+        UserRoleAssignment a = roleAssignmentRepository.findByUserIdAndIsActiveTrue(saved.getId()).get(0);
+        assertEquals("B.Tech", degreeName(a));
     }
 }

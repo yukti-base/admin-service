@@ -44,17 +44,24 @@ public record JobPostingResponse(
         ShortlistingMode shortlistingMode,
         boolean marksStudentPlaced,
         Integer maxApplications,
+        /** What the TnP must be shown about the chosen mode; empty when there is nothing to warn about. */
+        String shortlistingModeNotice,
         boolean notifyOnPublish,
         List<SkillResponse> skills,
         List<LocationResponse> locations,
         List<TargetResponse> targets,
         boolean editable,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        // Deadline extensions of a sealed drive (drive-service's reopen).
+        Instant reopenedAt,
+        int reopenCount,
+        Instant shortlistPublishedAt
 ) {
     public record SkillResponse(Long id, String skill, boolean mandatory) {}
 
     public record LocationResponse(Long id, String city, String state, String country) {}
 
-    public record TargetResponse(Long id, Long collegeId, Long departmentId, Integer batchYear, String degree) {}
+    public record TargetResponse(Long id, Long collegeId, Long departmentId, Integer batchYear,
+                                 Long degreeId, String degree) {}
 }

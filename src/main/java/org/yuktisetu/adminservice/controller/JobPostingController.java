@@ -30,6 +30,9 @@ import org.yuktisetu.adminservice.dto.PostingDocumentResponse;
 import org.yuktisetu.adminservice.dto.PostingTargetsRequest;
 import org.yuktisetu.adminservice.dto.ReapplicationPolicyRequest;
 import org.yuktisetu.adminservice.dto.ReapplicationPolicyResponse;
+import org.yuktisetu.adminservice.dto.ScoringConfigRequest;
+import org.yuktisetu.adminservice.dto.ScoringConfigResponse;
+import org.yuktisetu.adminservice.service.PostingScoringService;
 import org.yuktisetu.adminservice.service.ApplicantPoolService;
 import org.yuktisetu.adminservice.jd.JdParser;
 import org.yuktisetu.adminservice.service.JobPostingService;
@@ -64,6 +67,7 @@ public class JobPostingController {
 
     private final JobPostingService postingService;
     private final PostingEligibilityService eligibilityService;
+    private final PostingScoringService scoringService;
     private final ApplicantPoolService poolService;
     private final JdParser jdParser;
 
@@ -126,6 +130,22 @@ public class JobPostingController {
     @GetMapping("/{id}/criteria")
     public ResponseEntity<YuktiSetuResponse<EligibilityCriteriaResponse>> getCriteria(@PathVariable Long id) {
         return ResponseEntity.ok(YuktiSetuResponse.success(eligibilityService.getCriteria(id)));
+    }
+
+    /** Composite-scoring weights, threshold and floors. COMPOSITE_SCORE drives only. */
+    @PutMapping("/{id}/scoring")
+    @PreAuthorize(DRAFTERS)
+    public ResponseEntity<YuktiSetuResponse<ScoringConfigResponse>> setScoring(
+            @AuthenticationPrincipal UserPrincipal actor,
+            @PathVariable Long id,
+            @RequestBody @Valid ScoringConfigRequest request) {
+        return ResponseEntity.ok(YuktiSetuResponse.success(
+                scoringService.set(actor, id, request), "Scoring weights updated"));
+    }
+
+    @GetMapping("/{id}/scoring")
+    public ResponseEntity<YuktiSetuResponse<ScoringConfigResponse>> getScoring(@PathVariable Long id) {
+        return ResponseEntity.ok(YuktiSetuResponse.success(scoringService.get(id)));
     }
 
     @PutMapping("/{id}/reapplication-policy")
@@ -227,17 +247,32 @@ public class JobPostingController {
         return ResponseEntity.ok(YuktiSetuResponse.success(published, "Posting published"));
     }
 
-    /** Close applications early. The scheduled sweep does the same at the deadline. */
-    @PostMapping("/{id}/close")
-    @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN')")
-    public ResponseEntity<YuktiSetuResponse<JobPostingResponse>> close(
+    /**
+     * Apply the edits made to a LIVE drive. Re-checks everything publish checks,
+     * then re-resolves eligibility after commit: applicants who no longer qualify
+     * are disqualified and told, and everyone eligible is told the drive changed.
+     */
+    @PostMapping("/{id}/republish")
+    @PreAuthorize(DRAFTERS)
+    public ResponseEntity<YuktiSetuResponse<JobPostingResponse>> republish(
             @AuthenticationPrincipal UserPrincipal actor,
-            @PathVariable Long id,
-            @RequestBody(required = false) @Valid PostingCloseRequest request) {
-        String reason = request == null ? null : request.reason();
-        return ResponseEntity.ok(YuktiSetuResponse.success(
-                postingService.close(actor, id, reason), "Applications closed"));
+            @PathVariable Long id) {
+        JobPostingResponse republished = postingService.republish(actor, id);
+        postingService.startRepublishResolution(actor, id);
+        return ResponseEntity.ok(YuktiSetuResponse.success(republished, "Posting re-published"));
     }
+
+    // There is deliberately NO early-close endpoint.
+    //
+    // A drive's application window ends exactly one way: its deadline arrives and
+    // the sweep seals the pool. Setting a correct deadline is the TnP's call when
+    // they plan the drive with the company, and an early close was a second way for
+    // the window to end that did only half of what the sweep does -- it flipped the
+    // posting status without sealing the applicant pool, and the sweep could never
+    // come back for it because it only looks at PUBLISHED postings.
+    //
+    // The two operations that remain are enough: extend the deadline, or cancel the
+    // drive outright.
 
     @PostMapping("/{id}/cancel")
     @PreAuthorize("hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN')")
