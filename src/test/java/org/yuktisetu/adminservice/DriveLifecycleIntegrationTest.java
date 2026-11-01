@@ -42,6 +42,9 @@ class DriveLifecycleIntegrationTest {
     @Autowired DriveNotificationService driveNotificationService;
     @Autowired jakarta.persistence.EntityManager entityManager;
     @Autowired PostingCancellationCascade cascade;
+    @Autowired org.yuktisetu.adminservice.service.CompanyService companyService;
+    @Autowired org.yuktisetu.adminservice.controller.JobPostingController postingController;
+    @Autowired org.yuktisetu.adminservice.controller.CompanyController companyController;
     @Autowired ApplicationRequalificationService requalification;
 
     @MockitoBean EmailService emailService;
@@ -222,5 +225,112 @@ class DriveLifecycleIntegrationTest {
         assertTrue(jdbc.queryForObject(
                 "select notified from posting_eligible_students where posting_id = ? and student_user_id = ?",
                 Boolean.class, postingId, student), "the student is marked notified");
+    }
+
+    // ------------------------------------------------ review fixes, 2026-11-01
+
+    private UserPrincipal superAdmin() {
+        return new UserPrincipal(actorId, "admin@example.test",
+                java.util.List.of(new UserPrincipal.RoleClaim("TNP_SUPER_ADMIN", null, null)));
+    }
+
+    @Test
+    @DisplayName("cancelling a drive queues one drive-cancelled notice to the retired applicants")
+    void cancelQueuesTheNotice() {
+        long a = newUser("applicant");
+        long b = newUser("applicant");
+        newApplication(a, "APPLIED");
+        newApplication(b, "SHORTLISTED");
+
+        jobPostingService.cancel(superAdmin(), postingId, "Company withdrew");
+
+        Integer notices = jdbc.queryForObject("""
+                select count(*) from outbox_events
+                 where aggregate_id = ? and status = 'PENDING'
+                   and payload->'payload'->>'templateKey' = 'drive-cancelled'
+                """, Integer.class, String.valueOf(postingId));
+        assertEquals(1, notices, "one batched notice, written after the cascade swept the queue");
+        String payload = jdbc.queryForObject("""
+                select payload::text from outbox_events
+                 where aggregate_id = ? and payload->'payload'->>'templateKey' = 'drive-cancelled'
+                """, String.class, String.valueOf(postingId));
+        assertTrue(payload.contains("\"userId\": " + a), payload);
+        assertTrue(payload.contains("\"userId\": " + b), payload);
+        assertTrue(payload.contains("Company withdrew"), "the TnP's reason is quoted to the student");
+    }
+
+    @Test
+    @DisplayName("a company with a live drive cannot be soft-deleted, and the refusal gives the count")
+    void companyWithLiveDriveIsProtected() {
+        var e = assertThrows(org.yuktisetu.core.exception.ApiException.class,
+                () -> companyService.softDelete(superAdmin(), companyId));
+        assertTrue(e.getMessage().contains("1 published drive"), e.getMessage());
+        assertFalse(jdbc.queryForObject("select is_deleted from companies where id = ?", Boolean.class, companyId));
+    }
+
+    @Test
+    @DisplayName("a draft drive also blocks the company delete; finished drives do not")
+    void draftBlocksFinishedDoesNot() {
+        jdbc.update("update job_postings set status = 'DRAFT' where id = ?", postingId);
+        var e = assertThrows(org.yuktisetu.core.exception.ApiException.class,
+                () -> companyService.softDelete(superAdmin(), companyId));
+        assertTrue(e.getMessage().contains("1 draft drive"), e.getMessage());
+
+        jdbc.update("update job_postings set status = 'COMPLETED' where id = ?", postingId);
+        assertDoesNotThrow(() -> companyService.softDelete(superAdmin(), companyId));
+    }
+
+    @Test
+    @DisplayName("hard delete removes soft-deleted contacts too, instead of failing on their foreign key")
+    void hardDeleteClearsEveryContact() {
+        jdbc.update("insert into companies (created_at, updated_at, is_deleted, code, name, status) "
+                + "values (now(), now(), true, ?, 'Gone', 'ACTIVE')", "CO-" + UUID.randomUUID().toString().substring(0, 8));
+        long gone = jdbc.queryForObject("select max(id) from companies", Long.class);
+        jdbc.update("insert into company_contacts (created_at, updated_at, is_deleted, email, is_primary, name, company_id) "
+                + "values (now(), now(), true, 'old@example.test', false, 'Old HR', ?)", gone);
+        UserPrincipal itAdmin = new UserPrincipal(actorId, "it@example.test",
+                java.util.List.of(new UserPrincipal.RoleClaim("IT_ADMIN", null, null)));
+
+        companyService.hardDelete(itAdmin, gone);
+
+        assertEquals(0, jdbc.queryForObject("select count(*) from companies where id = ?", Integer.class, gone));
+    }
+
+    /** These reads had no role check: any logged-in student could list draft drives and recruiter contacts. */
+    @Test
+    @DisplayName("a student token is refused on the admin drive and company reads")
+    void studentCannotReadAdminData() {
+        var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                new UserPrincipal(actorId, "s@example.test",
+                        java.util.List.of(new UserPrincipal.RoleClaim("STUDENT", null, null))),
+                null, java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_STUDENT")));
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
+        try {
+            assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                    () -> postingController.get(postingId));
+            assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                    () -> companyController.get(companyId));
+            assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                    () -> companyController.listContacts(companyId));
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Test
+    @DisplayName("a ground volunteer may read the drive but not the recruiter contacts")
+    void volunteerReadsDriveNotContacts() {
+        var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                new UserPrincipal(actorId, "v@example.test",
+                        java.util.List.of(new UserPrincipal.RoleClaim("GROUND_VOLUNTEER", 1L, null))),
+                null, java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_GROUND_VOLUNTEER")));
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
+        try {
+            assertDoesNotThrow(() -> postingController.get(postingId));
+            assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                    () -> companyController.listContacts(companyId));
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
     }
 }

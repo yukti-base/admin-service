@@ -48,6 +48,7 @@ public class BulkStudentService {
     private final DepartmentRepository departmentRepository;
     private final DegreeRepository degreeRepository;
     private final UserRoleAssignmentRepository userRoleAssignmentRepository;
+    private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate jdbc;
 
     @Transactional
     public BulkStudentCreateResponse createBulkStudentProfile(UserPrincipal userPrincipal, BulkStudentRequest request) {
@@ -86,6 +87,23 @@ public class BulkStudentService {
             Set<String> departmentCodes = studentRequests.stream()
                     .map(StudentRequest::getDepartmentCode).filter(Objects::nonNull)
                     .map(String::trim).filter(c -> !c.isEmpty()).collect(Collectors.toSet());
+
+            // PRNs already taken, in one query, and PRNs repeated inside this
+            // upload. Either fails that ROW: the PRN is unique per student
+            // (uk_student_profile_prn), and letting a duplicate reach saveAll
+            // would fail the whole upload on the constraint instead.
+            Set<String> uploadPrns = studentRequests.stream()
+                    .map(StudentRequest::getPrn).filter(Objects::nonNull)
+                    .map(String::trim).filter(p -> !p.isEmpty()).collect(Collectors.toSet());
+            Set<String> takenPrns = uploadPrns.isEmpty() ? Set.of()
+                    : new java.util.HashSet<>(jdbc.queryForList(
+                        "SELECT prn FROM student_profiles WHERE prn IN (:prns)",
+                        new org.springframework.jdbc.core.namedparam.MapSqlParameterSource("prns", uploadPrns),
+                        String.class));
+            Map<String, Long> prnCounts = studentRequests.stream()
+                    .map(StudentRequest::getPrn).filter(Objects::nonNull).map(String::trim)
+                    .filter(p -> !p.isEmpty())
+                    .collect(Collectors.groupingBy(p -> p, Collectors.counting()));
 
             Map<String, College> collegesByCode = collegeCodes.isEmpty() ? Map.of()
                     : collegeRepository.findByCodeInAndIsDeletedFalse(collegeCodes).stream()
@@ -158,6 +176,20 @@ public class BulkStudentService {
                                 i + 1, rowDepartment.getCode(), rowDepartment.getDegree().getName(), rowDegree.getName()));
                     }
 
+                    String prn = studentRequest.getPrn().trim();
+                    if (prn.isEmpty() || prn.length() > 32) {
+                        throw new AdminExceptions.InvalidRequestException(String.format(
+                                "Student at position %d: prn must be 1-32 characters", i + 1));
+                    }
+                    if (takenPrns.contains(prn)) {
+                        throw new AdminExceptions.InvalidRequestException(String.format(
+                                "Student at position %d: prn %s already belongs to another student", i + 1, prn));
+                    }
+                    if (prnCounts.getOrDefault(prn, 0L) > 1) {
+                        throw new AdminExceptions.InvalidRequestException(String.format(
+                                "Student at position %d: prn %s appears more than once in this upload", i + 1, prn));
+                    }
+
                     // Generate password: lastname.first 5 prn digits
                     String password = generatePassword(studentRequest.getLastName(), studentRequest.getPrn());
 
@@ -180,6 +212,7 @@ public class BulkStudentService {
                     // + degree, see below), not on StudentProfile.
                     StudentProfile studentProfile = StudentProfile.builder()
                             .user(user)
+                            .prn(prn)
                             .dateOfBirth(null) // Not provided in request
                             .address(null) // Not provided in request
                             .cgpa(studentRequest.getCGPA())

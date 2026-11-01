@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.yuktisetu.adminservice.dto.CompanyContactRequest;
@@ -47,6 +49,7 @@ public class CompanyService {
     private final JobPostingRepository jobPostingRepository;
     private final PlacementOfferRepository placementOfferRepository;
     private final PlacementDrivePolicy policy;
+    private final NamedParameterJdbcTemplate jdbc;
 
     @Transactional
     public CompanyResponse create(UserPrincipal actor, CompanyRequest req) {
@@ -223,6 +226,18 @@ public class CompanyService {
             throw new AdminExceptions.InsufficientAuthorityException();
         }
         Company company = requireCompany(id);
+
+        // Refuse rather than orphan (deletion rule, 2026-09-23): a drive that is
+        // still a draft or still running would carry on pointing at a company
+        // that has vanished from every listing. Completed and cancelled drives
+        // are history and do not block; hard delete still refuses on them.
+        List<String> blockers = liveDriveBlockers(id);
+        if (!blockers.isEmpty()) {
+            String described = String.join(", ", blockers);
+            log.warn("Refused soft-delete of company id={} -- still has {}", id, described);
+            throw new AdminExceptions.StillReferencedException("Company", company.getName(), described);
+        }
+
         company.setDeleted(true);
         company.setDeletedAt(Instant.now());
         company.setDeletedBy(actor.userId());
@@ -289,7 +304,11 @@ public class CompanyService {
         if (placementOfferRepository.countByCompany_Id(id) > 0) {
             throw new AdminExceptions.HasDependentRecordsException("Company", id, "PlacementOffer");
         }
-        companyContactRepository.deleteAll(companyContactRepository.findByCompany_IdAndIsDeletedFalse(id));
+        // Every contact, soft-deleted ones included: they hold a foreign key to
+        // this row, and leaving one behind made the delete fail with a generic error.
+        int contactsRemoved = jdbc.update("DELETE FROM company_contacts WHERE company_id = :id",
+                new MapSqlParameterSource("id", id));
+        log.info("Removed {} contact(s) of company id={} before hard delete", contactsRemoved, id);
         companyRepository.delete(company);
         log.warn("Company PERMANENTLY deleted id={} code={} actorId={}", id, company.getCode(), actor.userId());
     }
@@ -440,5 +459,33 @@ public class CompanyService {
                 c.getId(), c.getCompany().getId(), c.getName(), c.getDesignation(),
                 c.getEmail(), c.getPhone(), c.isPrimary(), c.getNotes(),
                 c.getCreatedAt(), c.getUpdatedAt());
+    }
+
+    /**
+     * Drives of this company that are not finished, as "2 published drives",
+     * "1 draft" -- one grouped query. DRAFT through IN_PROGRESS block; COMPLETED
+     * and CANCELLED do not.
+     */
+    private List<String> liveDriveBlockers(Long companyId) {
+        List<String> out = new ArrayList<>();
+        jdbc.query("""
+                SELECT status, count(*) FROM job_postings
+                 WHERE company_id = :id AND is_deleted = false
+                   AND status NOT IN ('COMPLETED', 'CANCELLED')
+                 GROUP BY status ORDER BY status
+                """, new MapSqlParameterSource("id", companyId), rs -> {
+            long n = rs.getLong(2);
+            String drives = n == 1 ? "drive" : "drives";
+            String label = switch (rs.getString(1)) {
+                case "DRAFT" -> "draft " + drives;
+                case "PENDING_APPROVAL" -> drives + " awaiting approval";
+                case "PUBLISHED" -> "published " + drives;
+                case "APPLICATIONS_CLOSED" -> drives + " with applications closed";
+                case "IN_PROGRESS" -> drives + " in progress";
+                default -> drives + " in status " + rs.getString(1);
+            };
+            out.add(n + " " + label);
+        });
+        return out;
     }
 }

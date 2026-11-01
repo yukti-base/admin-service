@@ -13,6 +13,7 @@ import org.yuktisetu.adminservice.dto.PostingDocumentResponse;
 import org.yuktisetu.adminservice.dto.JobPostingResponse;
 import org.yuktisetu.adminservice.dto.PostingTargetsRequest;
 import org.yuktisetu.adminservice.exception.AdminExceptions;
+import org.yuktisetu.adminservice.rounds.RoundNotifier;
 import org.yuktisetu.adminservice.policy.PlacementDrivePolicy;
 import org.yuktisetu.core.exception.ApiException;
 import org.springframework.web.multipart.MultipartFile;
@@ -94,6 +95,7 @@ public class JobPostingService {
     private final EligibilityRunLauncher runLauncher;
     private final ApplicantPoolService poolService;
     private final PostingCancellationCascade cancellationCascade;
+    private final RoundNotifier roundNotifier;
 
     @Transactional
     public JobPostingResponse createDraft(UserPrincipal actor, JobPostingRequest req) {
@@ -508,10 +510,11 @@ public class JobPostingService {
         // row is written, so it can never sweep up a message about the cancel itself.
         PostingCancellationCascade.Result stopped = cancellationCascade.stop(id, now, actor.userId());
 
-        // TODO(notification): the applicants are now DRIVE_CANCELLED and nothing
-        // tells them. Needs a driveCancelled() builder in Dispatches, a seeded
-        // template, and a queueDriveCancelled() here -- all inside this
-        // transaction, like every other dispatch in this service.
+        // Tell every student whose application was just retired, with the reason.
+        // After the cascade above, so its sweep of queued messages cannot drop this one.
+        List<Long> retiredStudents = applicationRepository.findStudentIdsByPostingAndStatus(
+                id, ApplicationStatus.DRIVE_CANCELLED);
+        roundNotifier.driveCancelled(id, reason, retiredStudents);
 
         log.warn("Cancelled posting id={} reason={} applicationsRetired={} runsStopped={} gatesCancelled={} "
                         + "queuedNotificationsDropped={} actorId={}",

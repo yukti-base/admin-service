@@ -46,6 +46,19 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CompanyController {
 
+    /**
+     * Every staff role, and no student. These reads used to carry no annotation,
+     * so any logged-in student could list draft drives, criteria, weights and
+     * company records straight from the API.
+     */
+    private static final String STAFF_READERS =
+            "hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN','ROLE_TNP_COORDINATOR',"
+                    + "'ROLE_HOD','ROLE_FACULTY_DEPT_COORDINATOR','ROLE_GROUND_VOLUNTEER')";
+
+    /** Recruiter names, emails and phones: the people who run drives, not volunteers or faculty. */
+    private static final String CONTACT_READERS =
+            "hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN','ROLE_TNP_COORDINATOR')";
+
     private final CompanyService companyService;
 
     @PostMapping
@@ -58,6 +71,7 @@ public class CompanyController {
     }
 
     @GetMapping
+    @PreAuthorize(STAFF_READERS)
     public ResponseEntity<YuktiSetuResponse<Page<CompanyResponse>>> list(
             @RequestParam(required = false) CompanyStatus status,
             @RequestParam(defaultValue = "0") int page,
@@ -68,6 +82,7 @@ public class CompanyController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize(STAFF_READERS)
     public ResponseEntity<YuktiSetuResponse<CompanyResponse>> get(@PathVariable Long id) {
         return ResponseEntity.ok(YuktiSetuResponse.success(companyService.get(id)));
     }
@@ -130,6 +145,7 @@ public class CompanyController {
     }
 
     @GetMapping("/{id}/contacts")
+    @PreAuthorize(CONTACT_READERS)
     public ResponseEntity<YuktiSetuResponse<List<CompanyContactResponse>>> listContacts(@PathVariable Long id) {
         return ResponseEntity.ok(YuktiSetuResponse.success(companyService.listContacts(id)));
     }

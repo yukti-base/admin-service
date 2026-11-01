@@ -110,7 +110,7 @@ public class PostingEligibilityService {
         criteria.setCocubesEnabled(Boolean.TRUE.equals(req.cocubesEnabled()));
         criteria.setMinCocubesScore(req.minCocubesScore());
         criteria.setMissingDataPolicy(req.missingDataPolicy() == null
-                ? MissingDataPolicy.INELIGIBLE : req.missingDataPolicy());
+                ? MissingDataPolicy.INELIGIBLE : refuseWaveThrough(req.missingDataPolicy()));
         criteria.setCriteriaNote(req.criteriaNote());
         criteria.setUpdatedBy(actor.userId());
 
@@ -351,7 +351,7 @@ public class PostingEligibilityService {
             row.setValueJson(c.valueJson());
             row.setMandatory(!Boolean.FALSE.equals(c.mandatory()));
             row.setMissingDataPolicy(c.missingDataPolicy() == null
-                    ? MissingDataPolicy.NEEDS_REVIEW : c.missingDataPolicy());
+                    ? MissingDataPolicy.NEEDS_REVIEW : refuseWaveThrough(c.missingDataPolicy()));
             row.setCreatedBy(actor.userId());
             row.setUpdatedBy(actor.userId());
             customRepository.save(row);
@@ -403,5 +403,20 @@ public class PostingEligibilityService {
                 p.getPendingOfferStance(), p.getMaxLiveOffers(),
                 p.isCountInternshipTowardsPlacement(), p.isAllowIfLastOfferDeclined(),
                 p.getMinDaysSinceLastOffer(), p.isRequireAdminDecisionForPlaced());
+    }
+
+    /**
+     * ELIGIBLE ("let them through") is no longer offered (decided 2026-11-01): on
+     * a drive with a minimum CGPA it let students with no CGPA apply and then be
+     * ranked without one. Drives saved with it earlier keep it; a new save must
+     * pick INELIGIBLE or NEEDS_REVIEW.
+     */
+    private static MissingDataPolicy refuseWaveThrough(MissingDataPolicy policy) {
+        if (policy == MissingDataPolicy.ELIGIBLE) {
+            throw new AdminExceptions.InvalidRequestException(
+                    "'Let them through' is no longer allowed for students with a missing value. "
+                            + "Choose 'Treat as ineligible' or 'Flag for review'.");
+        }
+        return policy;
     }
 }

@@ -36,6 +36,7 @@ public class PlacementDrivePolicy {
     private static final String TNP_COORDINATOR = "TNP_COORDINATOR";
     private static final String HOD = "HOD";
     private static final String FACULTY_DEPT_COORDINATOR = "FACULTY_DEPT_COORDINATOR";
+    private static final String GROUND_VOLUNTEER = "GROUND_VOLUNTEER";
 
     /** Trust-wide roles reach every college by definition. */
     private boolean isTrustWide(UserPrincipal actor) {
@@ -202,5 +203,53 @@ public class PlacementDrivePolicy {
                     actor.userId(), actor.roles(), collegeId);
         }
         return allowed;
+    }
+
+    // ------------------------------------------------------------------ rounds
+    //
+    // Decided 2026-10-30. Marking is drive-day work: ground volunteers, and
+    // coordinators and admins, of ANY targeted college mark EVERY candidate --
+    // the round runs in one hall, whichever college the student is from.
+    // Publishing a round, correcting a published result, defining the rounds
+    // and ending the drive decide for the whole drive, so they need the same
+    // authority as publishing it: coordinator or above over every target.
+
+    /** Reading a drive's rounds and their sheets. The pool readers, plus the volunteers who mark. */
+    public boolean canViewRounds(UserPrincipal actor, Collection<Long> targetCollegeIds) {
+        if (isTrustWide(actor)) {
+            return true;
+        }
+        boolean allowed = targetCollegeIds.stream().anyMatch(collegeId ->
+                actor.hasRoleForCollege(TNP_COLLEGE_ADMIN, collegeId)
+                        || actor.hasRoleForCollege(TNP_COORDINATOR, collegeId)
+                        || actor.hasRoleForCollege(GROUND_VOLUNTEER, collegeId)
+                        || actor.hasRoleForCollege(HOD, collegeId)
+                        || actor.hasRoleForCollege(FACULTY_DEPT_COORDINATOR, collegeId));
+        if (!allowed) {
+            log.warn("Rounds read denied for actorId={} roles={}: no role in target colleges {}",
+                    actor.userId(), actor.roles(), targetCollegeIds);
+        }
+        return allowed;
+    }
+
+    /** Marking draft results in the current round, for any candidate of the drive. */
+    public boolean canMarkRounds(UserPrincipal actor, Collection<Long> targetCollegeIds) {
+        if (isTrustWide(actor)) {
+            return true;
+        }
+        boolean allowed = targetCollegeIds.stream().anyMatch(collegeId ->
+                actor.hasRoleForCollege(TNP_COLLEGE_ADMIN, collegeId)
+                        || actor.hasRoleForCollege(TNP_COORDINATOR, collegeId)
+                        || actor.hasRoleForCollege(GROUND_VOLUNTEER, collegeId));
+        if (!allowed) {
+            log.warn("Round marking denied for actorId={} roles={}: no marking role in target colleges {}",
+                    actor.userId(), actor.roles(), targetCollegeIds);
+        }
+        return allowed;
+    }
+
+    /** Defining rounds, publishing them, correcting published results and ending the drive. */
+    public boolean canManageRounds(UserPrincipal actor, Collection<Long> targetCollegeIds) {
+        return canPublishPosting(actor, targetCollegeIds);
     }
 }

@@ -48,6 +48,15 @@ public final class AdminExceptions {
         }
     }
 
+    /** Soft delete refused while live records still use the row; names the counts. */
+    public static class StillReferencedException extends ConflictException {
+        public StillReferencedException(String entity, String name, String blockers) {
+            super("HAS_DEPENDENT_RECORDS",
+                    entity + " '" + name + "' still has " + blockers
+                            + ". Complete or cancel them first, then delete it.");
+        }
+    }
+
     public static class NotYetDeactivatedException extends ConflictException {
         public NotYetDeactivatedException() {
             super("NOT_YET_DEACTIVATED", "Target must be soft-deleted/deactivated before it can be hard-deleted.");
@@ -124,6 +133,17 @@ public final class AdminExceptions {
     public static class InvalidRequestException extends ApiException {
         public InvalidRequestException(String message) {
             super(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", message);
+        }
+    }
+
+    /**
+     * A round action refused because of where the drive or round stands, with a
+     * code the portal can act on (MARKS_CHANGED: reload and review again;
+     * UNMARKED_CANDIDATES: confirm; ROUND_FROZEN: the next round is out; ...).
+     */
+    public static class RoundStateException extends ConflictException {
+        public RoundStateException(String code, String message) {
+            super(code, message);
         }
     }
 }

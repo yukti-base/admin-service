@@ -62,6 +62,15 @@ import org.yuktisetu.drive.model.PostingDocumentType;
 @RequiredArgsConstructor
 public class JobPostingController {
 
+    /**
+     * Every staff role, and no student. These reads used to carry no annotation,
+     * so any logged-in student could list draft drives, criteria, weights and
+     * company records straight from the API.
+     */
+    private static final String STAFF_READERS =
+            "hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN','ROLE_TNP_COORDINATOR',"
+                    + "'ROLE_HOD','ROLE_FACULTY_DEPT_COORDINATOR','ROLE_GROUND_VOLUNTEER')";
+
     private static final String DRAFTERS =
             "hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN','ROLE_TNP_COORDINATOR')";
 
@@ -81,6 +90,7 @@ public class JobPostingController {
     }
 
     @GetMapping
+    @PreAuthorize(STAFF_READERS)
     public ResponseEntity<YuktiSetuResponse<Page<JobPostingResponse>>> list(
             @RequestParam(required = false) PostingStatus status,
             @RequestParam(required = false) Long companyId,
@@ -92,6 +102,7 @@ public class JobPostingController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize(STAFF_READERS)
     public ResponseEntity<YuktiSetuResponse<JobPostingResponse>> get(@PathVariable Long id) {
         return ResponseEntity.ok(YuktiSetuResponse.success(postingService.get(id)));
     }
@@ -128,6 +139,7 @@ public class JobPostingController {
     }
 
     @GetMapping("/{id}/criteria")
+    @PreAuthorize(STAFF_READERS)
     public ResponseEntity<YuktiSetuResponse<EligibilityCriteriaResponse>> getCriteria(@PathVariable Long id) {
         return ResponseEntity.ok(YuktiSetuResponse.success(eligibilityService.getCriteria(id)));
     }
@@ -144,6 +156,7 @@ public class JobPostingController {
     }
 
     @GetMapping("/{id}/scoring")
+    @PreAuthorize(STAFF_READERS)
     public ResponseEntity<YuktiSetuResponse<ScoringConfigResponse>> getScoring(@PathVariable Long id) {
         return ResponseEntity.ok(YuktiSetuResponse.success(scoringService.get(id)));
     }
@@ -159,6 +172,7 @@ public class JobPostingController {
     }
 
     @GetMapping("/{id}/reapplication-policy")
+    @PreAuthorize(STAFF_READERS)
     public ResponseEntity<YuktiSetuResponse<ReapplicationPolicyResponse>> getReapplicationPolicy(@PathVariable Long id) {
         return ResponseEntity.ok(YuktiSetuResponse.success(eligibilityService.getReapplicationPolicy(id)));
     }
@@ -222,6 +236,7 @@ public class JobPostingController {
     }
 
     @GetMapping("/{id}/documents")
+    @PreAuthorize(STAFF_READERS)
     public ResponseEntity<YuktiSetuResponse<List<PostingDocumentResponse>>> listDocuments(@PathVariable Long id) {
         return ResponseEntity.ok(YuktiSetuResponse.success(postingService.listDocuments(id)));
     }
