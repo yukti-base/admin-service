@@ -84,7 +84,8 @@ public class StudentInviteService {
     }
 
     private void requireStaff(UserPrincipal principal) {
-        if (principal.hasRole(String.valueOf(RoleType.STUDENT))) {
+        // Same roles as the import itself: not students, not ground volunteers.
+        if (!BulkStudentService.canManageStudentImports(principal)) {
             throw new AdminExceptions.InsufficientAuthorityException();
         }
     }

@@ -371,7 +371,7 @@ public class RoundPublishingService {
                     postingId, roundId, app, from, to, move.isPresent(), actor.userId(), reason);
             return new RoundDtos.SheetRow(app, student, null, null, null, null, null, to, result.getVersion() + 1,
                     RoundMarkSource.PORTAL.name(), support.names(List.of(actor.userId())).get(actor.userId()),
-                    now, move.map(m -> m.to().name()).orElse(null));
+                    now, move.map(m -> m.to().name()).orElse(null), true);
         } catch (ApiException e) {
             throw e;
         } catch (Exception e) {

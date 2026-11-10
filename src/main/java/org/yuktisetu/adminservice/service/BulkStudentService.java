@@ -50,11 +50,23 @@ public class BulkStudentService {
     private final UserRoleAssignmentRepository userRoleAssignmentRepository;
     private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate jdbc;
 
+    /**
+     * The roles that see the Student Import page. Used to be "anyone who is not a
+     * student", which let ground volunteers import students and re-send invites
+     * from the API (fixed 2026-11-01).
+     */
+    public static final java.util.Set<String> IMPORTER_ROLES = java.util.Set.of(
+            "IT_ADMIN", "TNP_SUPER_ADMIN", "TNP_COLLEGE_ADMIN", "TNP_COORDINATOR", "HOD", "FACULTY_DEPT_COORDINATOR");
+
+    public static boolean canManageStudentImports(UserPrincipal principal) {
+        return principal != null && IMPORTER_ROLES.stream().anyMatch(principal::hasRole);
+    }
+
     @Transactional
     public BulkStudentCreateResponse createBulkStudentProfile(UserPrincipal userPrincipal, BulkStudentRequest request) {
         try {
             User loggedInUser = null;
-            if (!userPrincipal.hasRole(String.valueOf(RoleType.STUDENT))) {
+            if (canManageStudentImports(userPrincipal)) {
                 loggedInUser = userRepository.findById(userPrincipal.userId()).orElse(null);
                 log.info("User {} has {} authority to create bulk student profiles", userPrincipal.userId(), userPrincipal.roles().getFirst());
             } else {

@@ -366,12 +366,13 @@ public class DriveRoundService {
         String sql = """
                 SELECT a.id, u.id, u.first_name, u.last_name, u.email, sp.prn,
                        ura.college_name, ura.dept_name,
-                       rr.outcome, rr.version, rr.source, mu.first_name, mu.last_name, rr.marked_at, a.status
+                       rr.outcome, rr.version, rr.source, mu.first_name, mu.last_name, rr.marked_at, a.status,
+                       (u.is_deleted = false AND u.status = 'ACTIVE' AND ura.has_role IS NOT NULL) AS account_active
                   FROM job_applications a
                   JOIN users u ON u.id = a.student_user_id
                   LEFT JOIN student_profiles sp ON sp.user_id = u.id
                   LEFT JOIN LATERAL (
-                        SELECT c.name AS college_name, d.name AS dept_name
+                        SELECT c.name AS college_name, d.name AS dept_name, true AS has_role
                           FROM user_role_assignments x
                           LEFT JOIN colleges c ON c.id = x.college_id
                           LEFT JOIN departments d ON d.id = x.dept_id
@@ -391,7 +392,8 @@ public class DriveRoundService {
                         rs.getString(11),
                         rs.getString(12) == null ? null : RoundSupport.name(rs.getString(12), rs.getString(13)),
                         RoundSupport.instant(rs.getObject(14)),
-                        rs.getString(15)));
+                        rs.getString(15),
+                        rs.getBoolean(16)));
     }
 
     static RoundView view(DriveRound r, boolean current, boolean last, String publishedByName, Counts counts) {

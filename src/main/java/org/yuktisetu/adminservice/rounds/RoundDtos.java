@@ -89,7 +89,14 @@ public final class RoundDtos {
             String source,
             String markedByName,
             Instant markedAt,
-            String applicationStatus) {}
+            String applicationStatus,
+            /**
+             * False when the student's account was deactivated or deleted, or their
+             * student role revoked, after they were shortlisted. They stay a
+             * candidate -- the drive's record does not change behind the TnP's
+             * back -- but the sheet says so, so they can be marked accordingly.
+             */
+            boolean accountActive) {}
 
     /**
      * One round's candidates and marks. unchanged=true (rows empty) answers a

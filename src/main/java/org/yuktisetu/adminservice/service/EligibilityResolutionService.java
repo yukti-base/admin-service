@@ -213,6 +213,9 @@ public class EligibilityResolutionService {
             liveOffers.computeIfAbsent(o.getStudentUserId(), k -> new ArrayList<>(2)).add(o);
         }
 
+        java.util.Set<Long> lastOfferDeclined = new java.util.HashSet<>(
+                offerRepository.findStudentsWhoseLastOfferWasDeclined(studentIds));
+
         Map<Long, DrivePlacedStudentDecision> decisions = new HashMap<>();
         for (DrivePlacedStudentDecision d : decisionRepository.findByPosting_IdAndIsDeletedFalse(postingId)) {
             decisions.put(d.getStudentUserId(), d);
@@ -243,7 +246,8 @@ public class EligibilityResolutionService {
 
             EligibilityOutcome outcome = EligibilityEvaluator.evaluate(snapshot, facts);
             List<String> reapplicationFailures = ReapplicationRules.check(
-                    posting, policy, liveOffers.get(studentUserId), decisions.get(studentUserId));
+                    posting, policy, liveOffers.get(studentUserId), decisions.get(studentUserId),
+                    lastOfferDeclined.contains(studentUserId));
 
             if (outcome.eligible() && reapplicationFailures.isEmpty()) {
                 PostingEligibleStudent row = new PostingEligibleStudent();

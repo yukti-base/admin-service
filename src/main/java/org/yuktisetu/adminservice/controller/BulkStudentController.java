@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,11 +26,16 @@ import org.yuktisetu.core.security.UserPrincipal;
 @RestController
 @AllArgsConstructor
 public class BulkStudentController {
+    private static final String IMPORTERS =
+            "hasAnyAuthority('ROLE_IT_ADMIN','ROLE_TNP_SUPER_ADMIN','ROLE_TNP_COLLEGE_ADMIN','ROLE_TNP_COORDINATOR',"
+                    + "'ROLE_HOD','ROLE_FACULTY_DEPT_COORDINATOR')";
+
 
     private final BulkStudentService bulkStudentService;
     private final StudentInviteService studentInviteService;
 
     @PostMapping
+    @PreAuthorize(IMPORTERS)
     public ResponseEntity<YuktiSetuResponse<BulkStudentCreateResponse>> createBulkStudent(@AuthenticationPrincipal UserPrincipal userPrincipal,
                                                                        @RequestBody BulkStudentRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -38,11 +44,13 @@ public class BulkStudentController {
 
     /** Students imported but not yet activated -- the ones whose invite may need re-sending. */
     @GetMapping("/pending-invites")
+    @PreAuthorize(IMPORTERS)
     public ResponseEntity<YuktiSetuResponse<List<PendingInviteDto>>> pendingInvites(@AuthenticationPrincipal UserPrincipal userPrincipal) {
         return ResponseEntity.ok(YuktiSetuResponse.success(studentInviteService.listPending(userPrincipal), 200, "Pending invites"));
     }
 
     @PostMapping("/resend-invites")
+    @PreAuthorize(IMPORTERS)
     public ResponseEntity<YuktiSetuResponse<ResendInvitesResponse>> resendInvites(@AuthenticationPrincipal UserPrincipal userPrincipal,
                                                                                   @RequestBody ResendInvitesRequest request) {
         return ResponseEntity.ok(YuktiSetuResponse.success(

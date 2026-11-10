@@ -158,6 +158,20 @@ public class RoundNotifier {
                 p -> recipients -> Dispatches.driveCancelled(p.companyName(), p.title(), reason, url, recipients));
     }
 
+    /** The TnP's decision on the student's request to withdraw an accepted offer. */
+    public void offerWithdrawalDecided(Long postingId, Long studentId, boolean approved, String note) {
+        String url = studentPortalUrl + "/drives?tab=applied";
+        send("offer-withdrawal-decided", postingId, List.of(studentId),
+                p -> recipients -> Dispatches.offerWithdrawalDecided(p.companyName(), p.title(), approved, note, url, recipients));
+    }
+
+    /** The company withdrew the student's offer; recorded by an IT admin with the reason. */
+    public void offerWithdrawnByCompany(Long postingId, Long studentId, String reason) {
+        String url = studentPortalUrl + "/drives?tab=applied";
+        send("offer-withdrawn-by-company", postingId, List.of(studentId),
+                p -> recipients -> Dispatches.offerWithdrawnByCompany(p.companyName(), p.title(), reason, url, recipients));
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private void send(String kind, Long postingId, Collection<Long> userIds,
